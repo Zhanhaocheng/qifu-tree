@@ -740,16 +740,16 @@ export class QifuScene {
     (trans.uSunView.value as THREE.Vector3).copy(sunV);
 
     const activity = Math.min(1, this.recent24h / 20);
-    const glowBoost = 0.3 + s.night * (2.4 + activity * 1.8);
+    const glowBoost = 0.3 + s.night * (1.5 + activity * 1.0);
     for (const item of ITEMS) {
       if (item.glow) this.tagMats.get(item.id)!.emissiveIntensity = glowBoost;
     }
     for (const g of this.kit.glows) g.material.emissiveIntensity = THREE.MathUtils.lerp(g.day, g.night, Math.pow(s.night, 0.8));
 
     if (this.bloom) {
-      this.bloom.strength = 0.22 + s.night * (0.45 + activity * 0.5);
+      this.bloom.strength = 0.18 + s.night * (0.2 + activity * 0.2);
       this.bloom.radius = 0.65;
-      this.bloom.threshold = THREE.MathUtils.lerp(2.4, 0.85, s.night);
+      this.bloom.threshold = THREE.MathUtils.lerp(2.4, 1.05, s.night);
     }
 
     world.update(dt, {

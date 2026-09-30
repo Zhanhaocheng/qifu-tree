@@ -1,4 +1,4 @@
-import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TopupPack } from '../shared/game';
+import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
 import type { StorageMode } from './api';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -12,6 +12,7 @@ const ICONS = {
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 3v4m8-4v4M8 13l3 3 5-5"/></svg>',
   pray: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M7 3h10l-1 5 3 3v10H5V11l3-3z"/><circle cx="12" cy="14" r="2" fill="currentColor"/></svg>',
   shop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M4 8h16l-1.2 11.2a1 1 0 0 1-1 .8H6.2a1 1 0 0 1-1-.8zM8 8a4 4 0 0 1 8 0"/></svg>',
+  land: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 19 9 7l4 6 3-4 6 10zM16 5.5a1.5 1.5 0 1 0 .01 0"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></svg>',
 };
 
@@ -24,6 +25,7 @@ export interface HudHandlers {
   onCheckin: () => void;
   onPray: () => void;
   onShop: () => void;
+  onTerrain: () => void;
 }
 
 export function mountHud(h: HudHandlers) {
@@ -50,6 +52,7 @@ export function mountHud(h: HudHandlers) {
     <nav class="actions">
       <button class="act" id="btn-checkin">${ICONS.check}<span id="checkin-label">每日签到</span></button>
       <button class="act primary" id="btn-pray">${ICONS.pray}<span>祈福</span></button>
+      <button class="act" id="btn-terrain">${ICONS.land}<span>地形</span></button>
       <button class="act" id="btn-shop">${ICONS.shop}<span>商店</span></button>
     </nav>
     <div class="tag-count" id="tag-count"></div>`;
@@ -57,6 +60,7 @@ export function mountHud(h: HudHandlers) {
   $('#btn-checkin').addEventListener('click', h.onCheckin);
   $('#btn-pray').addEventListener('click', h.onPray);
   $('#btn-shop').addEventListener('click', h.onShop);
+  $('#btn-terrain').addEventListener('click', h.onTerrain);
   $('#btn-add-coin').addEventListener('click', h.onShop);
   setTimeout(() => ($('#hint').style.opacity = '0'), 9000);
 
@@ -296,6 +300,55 @@ export function openShop(
   );
   return { setCoins: (n: number) => ($('#shop-coins', d.el).textContent = String(n)) };
 }
+
+export function openTerrain(
+  user: PublicUser,
+  terrains: TerrainDef[],
+  onPick: (t: TerrainDef) => Promise<string | null>,
+) {
+  const cards = (u: PublicUser) =>
+    terrains
+      .map((t) => {
+        const owned = u.ownedTerrains.includes(t.id);
+        const current = u.terrain === t.id;
+        const status = current ? '<span class="tstate now">当前</span>' : owned ? '<span class="tstate own">已拥有 · 免费切换</span>' : `<span class="tstate buy">${t.price} 福币解锁</span>`;
+        return `<button type="button" class="terrain ${current ? 'current' : ''}" data-terrain="${t.id}">
+          <i class="tswatch" style="--a:${t.swatch[0]};--b:${t.swatch[1]}"></i>
+          <span class="tinfo"><b>${t.name}<small>${t.subtitle}</small></b><em>${t.desc}</em></span>
+          ${status}
+        </button>`;
+      })
+      .join('');
+  const d = openDialog(
+    '选择地形',
+    `<p class="balance">首次进入时会按你的编号生成专属地形。解锁后可随时免费切换。当前福币 <b id="terrain-coins">${user.coins}</b></p>
+     <div class="terrains" id="terrain-list">${cards(user)}</div>
+     <p class="error-line form-error" role="alert" hidden></p>`,
+    { wide: true },
+  );
+  const err = $('.form-error', d.el);
+  const list = $('#terrain-list', d.el);
+  list.addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.terrain');
+    if (!btn) return;
+    const t = terrains.find((x) => x.id === btn.dataset.terrain)!;
+    btn.disabled = true;
+    const message = await onPick(t);
+    btn.disabled = false;
+    if (message) {
+      err.textContent = message;
+      err.hidden = false;
+    } else d.close();
+  });
+  return {
+    refresh(u: PublicUser) {
+      list.innerHTML = cards(u);
+      $('#terrain-coins', d.el).textContent = String(u.coins);
+    },
+  };
+}
+
+export type { TerrainId };
 
 const timeFmt = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 

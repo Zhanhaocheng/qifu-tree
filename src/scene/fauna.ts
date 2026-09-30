@@ -350,7 +350,7 @@ export class Fauna {
     const id = this.id;
     const hasFlora = id === 'mountain' || id === 'bamboo' || id === 'jiangnan';
     if (hasFlora) {
-      const n = Math.round(16 * q);
+      const n = Math.round(26 * q);
       const geo = wingGeometry('butterfly');
       const m = flapMaterial('#ffffff', 22, 0.95);
       this.mats.push(m);
@@ -359,9 +359,10 @@ export class Fauna {
       const cols = ['#ffffff', '#f5d34a', '#f08a34', '#5b8fe0', '#ec7fb0'];
       for (let i = 0; i < n; i++) {
         im.setColorAt(i, new THREE.Color(cols[Math.floor(this.rng() * cols.length)]));
-        const spot = this.world.flowerSpots.length ? this.world.flowerSpots[Math.floor(this.rng() * this.world.flowerSpots.length)] : this.pickGround(10, 30).add(new THREE.Vector3(0, 0.6, 0));
+        const spot = this.pickGround(9, 20).add(new THREE.Vector3(0, 0.8, 0));
         this.flyers.b.push({ center: spot.clone(), r: 1.5 + this.rng() * 3, fa: 0.3 + this.rng() * 0.4, fb: 0.4 + this.rng() * 0.5, fc: 0.25 + this.rng() * 0.4, pa: this.rng() * 6, pb: this.rng() * 6, speed: 1, height: 0.6 + this.rng() * 1.2 });
       }
+      im.scale.setScalar(1);
       this.butterflies = im;
       this.group.add(im);
     }
@@ -393,7 +394,7 @@ export class Fauna {
     im.frustumCulled = false;
     im.castShadow = false;
     for (let i = 0; i < n; i++) {
-      this.birdData.push({ angle: this.rng() * 6.28, radius: 26 + this.rng() * 34, height: 20 + this.rng() * 24, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
+      this.birdData.push({ angle: this.rng() * 6.28, radius: 18 + this.rng() * 26, height: 13 + this.rng() * 18, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
       im.setColorAt(i, new THREE.Color(1, 1, 1));
     }
     this.birds = im;
@@ -533,7 +534,7 @@ export class Fauna {
         this.prevPos.set(i, prev);
         d.position.set(x, y, z);
         if (dx * dx + dz * dz > 1e-8) d.rotation.set(0, Math.atan2(dx, dz), Math.sin(t * 2 + f.pa) * 0.3);
-        d.scale.setScalar(day > 0.25 ? 1 : 0.0001);
+        d.scale.setScalar(day > 0.25 ? 2.0 : 0.0001);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });
@@ -571,7 +572,7 @@ export class Fauna {
         const y = b.height + Math.sin(env.time * 0.4 + b.bob) * 2;
         d.position.set(x, y, z);
         d.rotation.set(0, -b.angle + (b.speed > 0 ? Math.PI : 0) + Math.PI / 2 * (b.speed > 0 ? 1 : -1) + Math.PI, Math.sin(env.time * 0.5 + b.bob) * 0.25);
-        d.scale.setScalar(this.id === 'desert' ? 2.2 : 1.4);
+        d.scale.setScalar(this.id === 'desert' ? 3.2 : 2.4);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });

@@ -73,7 +73,7 @@ const flatMask = (r: number, a = 10, b = 26) => sm(r, a, b);
 const CONFIGS: Record<TerrainId, TerrainConfig> = {
   mountain: {
     id: 'mountain',
-    sky: { turbidity: 3.5, rayleigh: 1.6, mie: 0.004, mieG: 0.82, cloudCover: 0.42, fogTint: '#cbd7e6', fogTintAmount: 0.35 },
+    sky: { turbidity: 2.4, rayleigh: 2.6, mie: 0.004, mieG: 0.82, cloudCover: 0.42, fogTint: '#cbd7e6', fogTintAmount: 0.35 },
     fogDensity: 0.0056,
     treeStyle: { leafColors: ['#3f7a3a', '#4c8b42', '#5f9a4c', '#356a35'], accentColors: ['#d8a83a', '#c7523a'], accentRate: 0.06, density: 1 },
     particle: 'petal',
@@ -92,8 +92,8 @@ const CONFIGS: Record<TerrainId, TerrainConfig> = {
     grass: { count: 1, base: '#3e6b2c', tip: '#9cc257', height: 0.5, spread: 42, density: (x, z, h) => (h > -1.2 ? 1 : 0) },
     flowers: ['#ffffff', '#f5d76e', '#c7a0e8'],
     ridges: [
-      { radius: 170, base: 18, amp: 70, freq: 2.2, sharp: 1.6, color: '#3f566c', mist: 0.1, snowLine: 62 },
-      { radius: 225, base: 30, amp: 95, freq: 1.7, sharp: 1.5, color: '#5b7288', mist: 0.28 },
+      { radius: 170, base: 18, amp: 70, freq: 2.2, sharp: 1.6, color: '#2c4054', mist: 0.08, snowLine: 62 },
+      { radius: 225, base: 30, amp: 95, freq: 1.7, sharp: 1.5, color: '#4a6178', mist: 0.24 },
       { radius: 290, base: 44, amp: 120, freq: 1.3, sharp: 1.4, color: '#8399ad', mist: 0.48, snowLine: 110 },
     ],
     waterLevel: null,
@@ -239,8 +239,9 @@ const RIDGE_FRAG = /* glsl */ `
     float sn = smoothstep(uSnowLine - 3.0, uSnowLine + 6.0, vH + (h21(floor(vWorld.xz * 0.5)) - 0.5) * 9.0) * step(0.5, uSnowLine);
     sn *= smoothstep(0.35, 0.8, n.y);
     col = mix(col, vec3(0.92, 0.95, 1.0) * (uLight * 0.7 + uSunColor * diff * 0.7), sn);
-    float foot = 1.0 - smoothstep(-4.0, uTop * 0.75, vH);
-    float mist = clamp(uMist + foot * 0.85, 0.0, 1.0);
+    float foot = 1.0 - smoothstep(-6.0, uTop * 0.32, vH);
+    col *= mix(1.0, 0.72, smoothstep(0.25, 1.0, vH / uTop));
+    float mist = clamp(uMist + foot * 0.8, 0.0, 1.0);
     col = mix(col, uFog, mist);
     gl_FragColor = vec4(col, 1.0);
   }

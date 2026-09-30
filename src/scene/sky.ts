@@ -66,7 +66,7 @@ export function sampleSky(hour: number, out: SkyState): SkyState {
   out.hemiIntensity = THREE.MathUtils.lerp(a.hemiI, b.hemiI, t);
 
   const ang = (Math.PI * (h - 6)) / 12;
-  out.sunDir.set(-Math.cos(ang) * 0.85, Math.sin(ang), 0.45).normalize();
+  out.sunDir.set(-Math.cos(ang) * 0.9, Math.sin(ang), -0.28).normalize();
   out.moonDir.set(Math.cos(ang) * 0.7, -Math.sin(ang), -0.35).normalize();
   out.night = 1 - THREE.MathUtils.smoothstep(out.sunDir.y, -0.22, 0.03);
   out.hour = h;

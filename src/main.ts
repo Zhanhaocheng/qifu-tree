@@ -4,7 +4,7 @@ import { api, ApiError, type Config } from './api';
 import { AudioEngine } from './audio';
 import { QifuScene, type Quality } from './scene/scene';
 import { STAGE_PARAMS } from './scene/tree';
-import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, showPopup, toast } from './ui';
+import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, openTerrain, showPopup, toast } from './ui';
 
 const params = new URLSearchParams(location.search);
 const hourParam = params.get('hour');
@@ -13,6 +13,8 @@ const stageParam = params.get('stage');
 const terrainParam = params.get('terrain') as TerrainId | null;
 
 const audio = new AudioEngine();
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault());
 let user: PublicUser | null = null;
 let config: Config | null = null;
 let total = 0;
@@ -51,6 +53,29 @@ const hud = mountHud({
     if (!config) return;
     openPray(user, config.maxWishLength, submitPrayer, () => audio.click());
   },
+  onTerrain: () => {
+    audio.click();
+    if (!user) return showAuth();
+    if (!config) return;
+    openTerrain(user, config.terrains, async (t) => {
+      try {
+        const res = await api.setTerrain(t.id);
+        user = res.user;
+        audio.click();
+        if (res.spent) audio.coin();
+        closeDialog();
+        toast(res.spent ? `已解锁并切换到「${t.name}」（-${res.spent} 福币）` : `已切换到「${t.name}」`, 'success');
+        showBusy(true);
+        await new Promise((r) => setTimeout(r, 60));
+        refresh();
+        showBusy(false);
+        return null;
+      } catch (e) {
+        audio.error();
+        return e instanceof ApiError ? e.message : '切换失败';
+      }
+    });
+  },
   onShop: () => {
     audio.click();
     if (!user) return showAuth();
@@ -80,11 +105,19 @@ const scene = new QifuScene(
       if (tag) audio.click();
       showPopup(tag, x, y);
     },
-    onFrame: (s) => audio.setEnvironment(s.wind, s.night),
+    onFrame: (s) => {
+      audio.setEnvironment(s.wind, s.night);
+      if (audio.terrain !== s.terrain) audio.setTerrain(s.terrain);
+    },
+    onAnimal: (kind, pos, cam) => audio.animal(kind, pos.distanceTo(cam), pos.x - cam.x),
   },
   { quality: ['low', 'medium', 'high'].includes(qualityParam ?? '') ? (qualityParam as Quality) : undefined, hour: hourParam !== null ? Number(hourParam) : null, terrain: TERRAINS.some((t) => t.id === terrainParam) ? (terrainParam as TerrainId) : undefined },
 );
 (window as unknown as { __qifu: unknown }).__qifu = { scene, audio };
+
+function showBusy(on: boolean) {
+  document.querySelector('#app')!.classList.toggle('busy', on);
+}
 
 function handleError(e: unknown) {
   audio.error();

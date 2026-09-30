@@ -4,6 +4,8 @@
  * - 音效：点击、签到、祈福（铜钟）、福币、错误
  * - 环境声：风声（随风力变化）、夜间虫鸣
  */
+import type { TerrainId } from '../shared/game';
+
 const STORAGE_KEY = 'qifu.muted';
 
 const NOTE = (name: string) => {
@@ -27,7 +29,12 @@ export class AudioEngine {
   private master!: GainNode;
   private musicBus!: GainNode;
   private sfxBus!: GainNode;
+  terrain: TerrainId = 'mountain';
   private windGain!: GainNode;
+  private waterGain!: GainNode;
+  private natureTimer: number | null = null;
+  private chimeAt = 0;
+  private lastAnimal = new Map<string, number>();
   private windFilter!: BiquadFilterNode;
   private reverb!: ConvolverNode;
   private padFilter!: BiquadFilterNode;
@@ -140,12 +147,35 @@ export class AudioEngine {
     noise.connect(this.windFilter).connect(this.windGain).connect(this.master);
     noise.start();
 
+    const water = ctx.createBufferSource();
+    water.buffer = this.noiseBuffer(5);
+    water.loop = true;
+    const wf = ctx.createBiquadFilter();
+    wf.type = 'bandpass';
+    wf.frequency.value = 1400;
+    wf.Q.value = 0.9;
+    const wf2 = ctx.createBiquadFilter();
+    wf2.type = 'highpass';
+    wf2.frequency.value = 500;
+    this.waterGain = ctx.createGain();
+    this.waterGain.gain.value = 0;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.35;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.25;
+    lfo.connect(lfoGain).connect(this.waterGain.gain);
+    lfo.start();
+    water.connect(wf).connect(wf2).connect(this.waterGain).connect(this.master);
+    water.start();
+
     this.applyMute();
     const now = ctx.currentTime;
     this.nextChordAt = now + 0.2;
     this.nextNoteAt = now + 3;
     this.timer = window.setInterval(() => this.schedule(), 400);
     this.cricketTimer = window.setInterval(() => this.cricket(), 900);
+    this.natureTimer = window.setInterval(() => this.nature(), 1100);
+    this.setTerrain(this.terrain);
   }
 
   private echoIn!: DelayNode;
@@ -264,6 +294,7 @@ export class AudioEngine {
   private cricket() {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running' || this.muted) return;
+    if (this.terrain === 'snow' || this.terrain === 'desert') return;
     if (Math.random() > this.night * 0.9) return;
     const base = ctx.currentTime + 0.02;
     const pan = ctx.createStereoPanner();
@@ -293,9 +324,127 @@ export class AudioEngine {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    this.windGain.gain.setTargetAtTime(0.015 + wind * 0.32, t, 0.3);
-    this.windFilter.frequency.setTargetAtTime(280 + wind * 900, t, 0.3);
+    const boost = this.terrain === 'desert' ? 1.3 : this.terrain === 'snow' ? 1.5 : this.terrain === 'mountain' ? 1.2 : 1;
+    this.windGain.gain.setTargetAtTime((0.015 + wind * 0.32) * boost, t, 0.3);
+    const base = this.terrain === 'desert' ? 420 : this.terrain === 'snow' ? 240 : 280;
+    this.windFilter.frequency.setTargetAtTime(base + wind * 900, t, 0.3);
     this.padFilter.frequency.setTargetAtTime(1500 - night * 700, t, 2);
+  }
+
+  setTerrain(id: TerrainId) {
+    this.terrain = id;
+    if (!this.ctx) return;
+    const level = id === 'bamboo' ? 0.085 : id === 'jiangnan' ? 0.03 : 0;
+    this.waterGain.gain.setTargetAtTime(level, this.ctx.currentTime, 0.6);
+  }
+
+  /** 白天鸟鸣、夜晚蛙鸣、风铃 */
+  private nature() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || this.muted) return;
+    const day = 1 - this.night;
+    const t = ctx.currentTime;
+    const t0 = this.terrain;
+    if (day > 0.4 && t0 !== 'desert' && t0 !== 'snow' && Math.random() < 0.28 * day) this.chirp(t + Math.random() * 0.4, 0.5 + Math.random() * 0.5);
+    if (this.night > 0.5 && (t0 === 'bamboo' || t0 === 'jiangnan') && Math.random() < 0.3) this.frog(t + Math.random() * 0.5);
+    if (t > this.chimeAt && (this.wind > 0.28 || Math.random() < 0.05)) {
+      this.chimeAt = t + 14 + Math.random() * 20;
+      const n = 3 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < n; i++) this.bell(t + i * (0.12 + Math.random() * 0.25), NOTE(['G6', 'A6', 'C7', 'D7', 'E6'][Math.floor(Math.random() * 5)]), 0.03, 1.6, this.sfxBus);
+    }
+  }
+
+  private chirp(at: number, vol: number) {
+    const ctx = this.ctx!;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() * 1.6 - 0.8;
+    pan.connect(this.master);
+    const pulses = 2 + Math.floor(Math.random() * 4);
+    const f0 = 2400 + Math.random() * 1600;
+    for (let i = 0; i < pulses; i++) {
+      const t = at + i * 0.11;
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f0 * (1 + Math.random() * 0.2), t);
+      o.frequency.exponentialRampToValueAtTime(f0 * (1.35 + Math.random() * 0.3), t + 0.07);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.028 * vol, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      o.connect(g).connect(pan);
+      o.start(t);
+      o.stop(t + 0.1);
+    }
+  }
+
+  private frog(at: number) {
+    const ctx = this.ctx!;
+    const n = 2 + Math.floor(Math.random() * 3);
+    const f = 260 + Math.random() * 120;
+    for (let i = 0; i < n; i++) {
+      const t = at + i * 0.16;
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.setValueAtTime(f, t);
+      o.frequency.linearRampToValueAtTime(f * 0.8, t + 0.1);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 700;
+      bp.Q.value = 3;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.03, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+      o.connect(bp).connect(g).connect(this.master);
+      o.start(t);
+      o.stop(t + 0.15);
+    }
+  }
+
+  /** 场景中动物发声：距离越远越轻 */
+  animal(kind: 'bird' | 'crane' | 'deer' | 'crow' | 'bell' | 'rabbit', dist: number, dx: number) {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - (this.lastAnimal.get(kind) ?? -99) < 3) return;
+    this.lastAnimal.set(kind, now);
+    const vol = Math.max(0.12, 1 - dist / 90);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.max(-1, Math.min(1, dx / 30));
+    pan.connect(this.master);
+    const voice = (type: OscillatorType, f0: number, f1: number, dur: number, peak: number, bpF = 0) => {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, now);
+      o.frequency.exponentialRampToValueAtTime(f1, now + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(peak * vol, now + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      let node: AudioNode = o;
+      if (bpF) {
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = bpF;
+        bp.Q.value = 2.5;
+        o.connect(bp);
+        node = bp;
+      }
+      node.connect(g).connect(pan);
+      o.start(now);
+      o.stop(now + dur + 0.05);
+    };
+    if (kind === 'bird') this.chirp(now, vol);
+    else if (kind === 'crane') {
+      voice('sawtooth', 900, 1500, 0.5, 0.05, 1300);
+      setTimeout(() => this.ctx && this.ready() && voice('sawtooth', 1100, 1700, 0.6, 0.045, 1400), 520);
+    } else if (kind === 'deer') voice('sawtooth', 260, 180, 0.22, 0.07, 500);
+    else if (kind === 'crow') {
+      for (let i = 0; i < 2; i++) setTimeout(() => this.ready() && voice('sawtooth', 520, 300, 0.22, 0.05, 900), i * 300);
+    } else if (kind === 'bell') {
+      this.bell(now, NOTE('E6'), 0.05 * vol, 1.1, pan);
+      this.bell(now + 0.18, NOTE('D6'), 0.045 * vol, 1.1, pan);
+    }
   }
 
   private ready() {
@@ -363,6 +512,7 @@ export class AudioEngine {
   dispose() {
     if (this.timer) clearInterval(this.timer);
     if (this.cricketTimer) clearInterval(this.cricketTimer);
+    if (this.natureTimer) clearInterval(this.natureTimer);
     void this.wind;
   }
 }
