@@ -1,5 +1,5 @@
 import './style.css';
-import { STAGES, stageOf, type PublicUser, type PrayerTag } from '../shared/game';
+import { STAGES, TERRAINS, stageOf, type PublicUser, type PrayerTag, type TerrainId } from '../shared/game';
 import { api, ApiError, type Config } from './api';
 import { AudioEngine } from './audio';
 import { QifuScene, type Quality } from './scene/scene';
@@ -9,6 +9,8 @@ import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, showP
 const params = new URLSearchParams(location.search);
 const hourParam = params.get('hour');
 const qualityParam = params.get('q') as Quality | null;
+const stageParam = params.get('stage');
+const terrainParam = params.get('terrain') as TerrainId | null;
 
 const audio = new AudioEngine();
 let user: PublicUser | null = null;
@@ -80,7 +82,7 @@ const scene = new QifuScene(
     },
     onFrame: (s) => audio.setEnvironment(s.wind, s.night),
   },
-  { quality: ['low', 'medium', 'high'].includes(qualityParam ?? '') ? (qualityParam as Quality) : undefined, hour: hourParam !== null ? Number(hourParam) : null },
+  { quality: ['low', 'medium', 'high'].includes(qualityParam ?? '') ? (qualityParam as Quality) : undefined, hour: hourParam !== null ? Number(hourParam) : null, terrain: TERRAINS.some((t) => t.id === terrainParam) ? (terrainParam as TerrainId) : undefined },
 );
 (window as unknown as { __qifu: unknown }).__qifu = { scene, audio };
 
@@ -136,12 +138,21 @@ async function submitPrayer(item: Parameters<typeof api.pray>[0], text: string):
   }
 }
 
+function syncTerrain() {
+  if (terrainParam && TERRAINS.some((t) => t.id === terrainParam)) return;
+  const want: TerrainId = user ? user.terrain : 'mountain';
+  const seed = user ? user.id : 1;
+  if (scene.getTerrain() !== want) scene.setTerrain(want, seed);
+}
+
 function currentStage() {
+  if (stageParam !== null) return Math.min(3, Math.max(0, Number(stageParam)));
   return user ? user.stage : stageOf(Math.floor(total / 4));
 }
 
 function refresh() {
   hud.setUser(user);
+  syncTerrain();
   scene.setStage(currentStage(), true);
   hud.setStage(scene.getStage(), user ? '' : '来访');
   hud.setTagCount(scene.getTagCount(), total);
@@ -151,6 +162,7 @@ async function loadTags(): Promise<PrayerTag[]> {
   const res = await api.prayers();
   total = res.total;
   scene.setActivity(res.recent24h);
+  syncTerrain();
   scene.setStage(currentStage(), true);
   scene.setTags(res.tags);
   hud.setStage(scene.getStage(), user ? `已祈福 ${user.prayerCount} 次` : '来访');
@@ -165,6 +177,7 @@ async function boot() {
     user = me.user;
     hud.setMode(cfg.mode);
     hud.setUser(user);
+    syncTerrain();
     scene.setStage(currentStage(), false);
     await loadTags();
     hud.setStage(scene.getStage(), user ? `已祈福 ${user.prayerCount} 次` : '来访');

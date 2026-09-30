@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: qifu-tree
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: qifu-data
+      mountPath: /data
+      sizeGB: 1
