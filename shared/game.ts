@@ -52,6 +52,30 @@ export function checkinReward(streak: number): number {
   return 20 + Math.min(streak - 1, 6) * 5;
 }
 
+export type TerrainId = 'mountain' | 'bamboo' | 'jiangnan' | 'desert' | 'snow';
+
+export interface TerrainDef {
+  id: TerrainId;
+  name: string;
+  subtitle: string;
+  desc: string;
+  price: number;
+  swatch: [string, string];
+}
+
+export const TERRAINS: TerrainDef[] = [
+  { id: 'mountain', name: '山巅云海', subtitle: '孤峰之上', desc: '绝壁孤峰，脚下云海翻涌，远山如黛', price: 30, swatch: ['#8fb4d9', '#f4efe4'] },
+  { id: 'bamboo', name: '竹林溪谷', subtitle: '幽篁听泉', desc: '竹影婆娑，溪水潺潺，薄雾里有鹿与蜻蜓', price: 30, swatch: ['#3f7a4a', '#b8d9a0'] },
+  { id: 'jiangnan', name: '江南水乡', subtitle: '烟雨小桥', desc: '粉墙黛瓦，拱桥乌篷，一池莲叶伴垂柳', price: 30, swatch: ['#5f8f9c', '#e8e2d2'] },
+  { id: 'desert', name: '大漠孤烟', subtitle: '长河落日', desc: '沙丘如浪，孤烟直上，驼铃隐隐', price: 30, swatch: ['#d9a25b', '#f3d9a0'] },
+  { id: 'snow', name: '雪山寒林', subtitle: '千山鸟飞绝', desc: '雪峰环绕，寒松覆雪，红绸格外醒目', price: 30, swatch: ['#a9c4dc', '#ffffff'] },
+];
+
+export function defaultTerrainFor(userId: number): TerrainId {
+  const h = Math.imul(userId + 7, 2654435761) >>> 0;
+  return TERRAINS[(h >>> 8) % TERRAINS.length].id;
+}
+
 export const MAX_WISH_LENGTH = 60;
 export const START_ENERGY = 30;
 
@@ -64,6 +88,8 @@ export interface PublicUser {
   checkedInToday: boolean;
   prayerCount: number;
   stage: number;
+  terrain: TerrainId;
+  ownedTerrains: TerrainId[];
 }
 
 export interface PrayerTag {

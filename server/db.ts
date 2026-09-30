@@ -24,7 +24,13 @@ const SCHEMA = [
     coins INTEGER NOT NULL DEFAULT 0,
     streak INTEGER NOT NULL DEFAULT 0,
     last_checkin TEXT,
+    terrain TEXT,
     created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_terrains (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    terrain TEXT NOT NULL,
+    PRIMARY KEY (user_id, terrain)
   )`,
   `CREATE TABLE IF NOT EXISTS prayers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,6 +76,7 @@ export async function createDb(url: string, mode: DbMode, authToken?: string): P
   if (url.startsWith('file:')) fs.mkdirSync(path.dirname(url.slice('file:'.length)), { recursive: true });
   const client = createClient({ url, authToken });
   for (const stmt of SCHEMA) await client.execute(stmt);
+  await client.execute('ALTER TABLE users ADD COLUMN terrain TEXT').catch(() => undefined);
   await client.execute('PRAGMA foreign_keys = ON').catch(() => undefined);
   return {
     mode,

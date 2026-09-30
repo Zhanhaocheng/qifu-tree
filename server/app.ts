@@ -7,6 +7,9 @@ import {
   ITEMS,
   MAX_WISH_LENGTH,
   START_ENERGY,
+  TERRAINS,
+  defaultTerrainFor,
+  type TerrainId,
   TOPUP_PACKS,
   checkinReward,
   stageOf,
@@ -26,6 +29,7 @@ interface UserRow {
   coins: number;
   streak: number;
   last_checkin: string | null;
+  terrain: string | null;
   created_at: number;
 }
 
@@ -63,7 +67,22 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
 
   const getUser = (id: number, ex: Exec = db) => ex.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]);
 
+  const ensureTerrain = async (u: UserRow): Promise<{ terrain: TerrainId; owned: TerrainId[] }> => {
+    if (!u.terrain) {
+      u.terrain = defaultTerrainFor(u.id);
+      await db.run('UPDATE users SET terrain = ? WHERE id = ?', [u.terrain, u.id]);
+      await db.run('INSERT OR IGNORE INTO user_terrains (user_id, terrain) VALUES (?, ?)', [u.id, u.terrain]);
+    }
+    const owned = (await db.all<{ terrain: TerrainId }>('SELECT terrain FROM user_terrains WHERE user_id = ?', [u.id])).map((r) => r.terrain);
+    if (!owned.includes(u.terrain as TerrainId)) {
+      await db.run('INSERT OR IGNORE INTO user_terrains (user_id, terrain) VALUES (?, ?)', [u.id, u.terrain]);
+      owned.push(u.terrain as TerrainId);
+    }
+    return { terrain: u.terrain as TerrainId, owned };
+  };
+
   const toPublic = async (u: UserRow): Promise<PublicUser> => {
+    const { terrain, owned } = await ensureTerrain(u);
     const row = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM prayers WHERE user_id = ?', [u.id]);
     const n = row?.n ?? 0;
     return {
@@ -75,6 +94,8 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       checkedInToday: u.last_checkin === today(),
       prayerCount: n,
       stage: stageOf(n),
+      terrain,
+      ownedTerrains: owned,
     };
   };
 
@@ -139,6 +160,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       );
       noteFailure(key);
       await startSession(c, info.lastId);
+      await ensureTerrain((await getUser(info.lastId))!);
       return c.json({ user: await toPublic((await getUser(info.lastId))!) });
     } catch {
       return fail(c, '用户名已被使用', 409);
@@ -175,7 +197,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
   });
 
   app.get('/api/config', (c) =>
-    c.json({ items: ITEMS, packs: TOPUP_PACKS, maxWishLength: MAX_WISH_LENGTH, mode: db.mode }),
+    c.json({ items: ITEMS, packs: TOPUP_PACKS, terrains: TERRAINS, maxWishLength: MAX_WISH_LENGTH, mode: db.mode }),
   );
 
   app.post('/api/checkin', async (c) => {
@@ -238,6 +260,30 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       mine: true,
     };
     return c.json({ tag, reward: item.reward, user: await toPublic((await getUser(u.id))!) });
+  });
+
+  app.post('/api/terrain', async (c) => {
+    const u = await currentUser(c);
+    if (!u) return fail(c, '请先登录', 401);
+    const b = await body(c);
+    const def = TERRAINS.find((t) => t.id === b.terrain);
+    if (!def) return fail(c, '未知的地形');
+    await ensureTerrain(u);
+    const res = await db.tx(async (t) => {
+      const fresh = (await getUser(u.id, t))!;
+      const owned = await t.get('SELECT 1 FROM user_terrains WHERE user_id = ? AND terrain = ?', [u.id, def.id]);
+      let spent = 0;
+      if (!owned) {
+        if (fresh.coins < def.price) return { error: '福币不足，请先充值' };
+        await t.run('UPDATE users SET coins = coins - ? WHERE id = ?', [def.price, u.id]);
+        await t.run('INSERT INTO user_terrains (user_id, terrain) VALUES (?, ?)', [u.id, def.id]);
+        spent = def.price;
+      }
+      await t.run('UPDATE users SET terrain = ? WHERE id = ?', [def.id, u.id]);
+      return { spent };
+    });
+    if ('error' in res) return fail(c, res.error as string, 402);
+    return c.json({ spent: res.spent, user: await toPublic((await getUser(u.id))!) });
   });
 
   app.post('/api/topup', async (c) => {

@@ -40,7 +40,12 @@ export interface SkyState {
   hour: number;
 }
 
-const tmp = new THREE.Color();
+const cache = new Map<string, THREE.Color>();
+const col = (s: string) => {
+  let c = cache.get(s);
+  if (!c) cache.set(s, (c = new THREE.Color(s)));
+  return c;
+};
 
 export function sampleSky(hour: number, out: SkyState): SkyState {
   const h = ((hour % 24) + 24) % 24;
@@ -49,7 +54,7 @@ export function sampleSky(hour: number, out: SkyState): SkyState {
   const a = KEYS[i];
   const b = KEYS[i + 1];
   const t = THREE.MathUtils.smoothstep(h, a.h, b.h);
-  const mix = (target: THREE.Color, ca: string, cb: string) => target.set(ca).lerp(tmp.set(cb), t);
+  const mix = (target: THREE.Color, ca: string, cb: string) => target.copy(col(ca)).lerp(col(cb), t);
   mix(out.top, a.top, b.top);
   mix(out.horizon, a.horizon, b.horizon);
   mix(out.sunColor, a.sun, b.sun);

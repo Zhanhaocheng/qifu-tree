@@ -72,3 +72,20 @@ test('pray costs energy, premium needs coins, topup', async () => {
   s.clear();
   assert.equal((await s.call('GET', '/api/prayers')).json.tags[0].mine, false);
 });
+
+test('terrain is assigned at signup; switching costs coins once', async () => {
+  const s = setup();
+  const r = await s.call('POST', '/api/register', { username: 'terra', password: '123456' });
+  const first = r.json.user.terrain as string;
+  assert.ok(['mountain', 'bamboo', 'jiangnan', 'desert', 'snow'].includes(first));
+  assert.deepEqual(r.json.user.ownedTerrains, [first]);
+  const other = first === 'snow' ? 'desert' : 'snow';
+  assert.equal((await s.call('POST', '/api/terrain', { terrain: other })).status, 402);
+  await s.call('POST', '/api/topup', { pack: 'p6' });
+  const sw = await s.call('POST', '/api/terrain', { terrain: other });
+  assert.equal(sw.json.user.terrain, other);
+  assert.equal(sw.json.user.coins, 30);
+  const back = await s.call('POST', '/api/terrain', { terrain: first });
+  assert.equal(back.json.spent, 0);
+  assert.equal(back.json.user.coins, 30);
+});
