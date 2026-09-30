@@ -205,7 +205,7 @@ export class SkyRig {
 
   constructor() {
     const skyMat = this.sky.material as THREE.ShaderMaterial;
-    skyMat.fragmentShader = skyMat.fragmentShader.replace('uniform float time;', 'uniform float time;\nuniform float uGain;').replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * uGain, 1.0 );');
+    skyMat.fragmentShader = skyMat.fragmentShader.replace('uniform float time;', 'uniform float time;\nuniform float uGain;').replace('gl_FragColor = vec4( texColor, 1.0 );', 'vec3 tcG = texColor * uGain; float lumG = dot(tcG, vec3(0.333)); tcG = mix(vec3(lumG), tcG, 1.85); gl_FragColor = vec4( tcG, 1.0 );');
     skyMat.uniforms.uGain = { value: 0.05 };
     this.sky.scale.setScalar(1800);
     this.sky.renderOrder = -30;

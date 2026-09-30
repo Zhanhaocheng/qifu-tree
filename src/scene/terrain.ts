@@ -73,7 +73,7 @@ const flatMask = (r: number, a = 10, b = 26) => sm(r, a, b);
 const CONFIGS: Record<TerrainId, TerrainConfig> = {
   mountain: {
     id: 'mountain',
-    sky: { turbidity: 2.4, rayleigh: 2.6, mie: 0.004, mieG: 0.82, cloudCover: 0.42, fogTint: '#cbd7e6', fogTintAmount: 0.35 },
+    sky: { turbidity: 2.4, rayleigh: 2.6, mie: 0.004, mieG: 0.82, cloudCover: 0.42, fogTint: '#9dbbdc', fogTintAmount: 0.5 },
     fogDensity: 0.0056,
     treeStyle: { leafColors: ['#3f7a3a', '#4c8b42', '#5f9a4c', '#356a35'], accentColors: ['#d8a83a', '#c7523a'], accentRate: 0.06, density: 1 },
     particle: 'petal',
@@ -191,7 +191,7 @@ const CONFIGS: Record<TerrainId, TerrainConfig> = {
   },
   snow: {
     id: 'snow',
-    sky: { turbidity: 2.4, rayleigh: 2.4, mie: 0.003, mieG: 0.8, cloudCover: 0.5, fogTint: '#dbe6f2', fogTintAmount: 0.55 },
+    sky: { turbidity: 2.4, rayleigh: 2.4, mie: 0.003, mieG: 0.8, cloudCover: 0.5, fogTint: '#b9d0ea', fogTintAmount: 0.55 },
     fogDensity: 0.0105,
     treeStyle: { leafColors: ['#5c7a5a', '#6f8f6c', '#7d9a80'], accentColors: ['#f2f6ff', '#e9c6cf'], accentRate: 0.38, density: 0.5 },
     particle: 'snow',
