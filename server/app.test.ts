@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from './app.js';
-import { openDb } from './db.js';
+import { memoryDb } from './db.js';
 
 function setup() {
   let t = Date.parse('2026-01-10T04:00:00Z');
-  const app = createApp({ db: openDb(':memory:'), now: () => t });
+  const app = createApp({ db: memoryDb(), now: () => t });
   let cookie = '';
   const call = async (method: string, url: string, payload?: unknown) => {
     const res = await app.request(url, {

@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
-import type { DB } from './db.js';
+import type { Db, Exec } from './db.js';
 import {
   ITEMS,
   MAX_WISH_LENGTH,
@@ -30,13 +30,18 @@ interface UserRow {
 }
 
 export interface AppOptions {
-  db: DB;
+  db: Db | Promise<Db>;
   timeZone?: string;
   now?: () => number;
 }
 
-export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: AppOptions) {
+export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now }: AppOptions) {
   const app = new Hono();
+  let db!: Db;
+  app.use('*', async (_c, next) => {
+    db ??= await dbInput;
+    await next();
+  });
 
   const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
   const dayOf = (ms: number) => dayFormat.format(new Date(ms));
@@ -56,10 +61,11 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     else failures.set(key, { count: 1, until: now() + 10 * 60 * 1000 });
   };
 
-  const getUser = (id: number) => db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
+  const getUser = (id: number, ex: Exec = db) => ex.get<UserRow>('SELECT * FROM users WHERE id = ?', [id]);
 
-  const toPublic = (u: UserRow): PublicUser => {
-    const { n } = db.prepare('SELECT COUNT(*) AS n FROM prayers WHERE user_id = ?').get(u.id) as { n: number };
+  const toPublic = async (u: UserRow): Promise<PublicUser> => {
+    const row = await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM prayers WHERE user_id = ?', [u.id]);
+    const n = row?.n ?? 0;
     return {
       id: u.id,
       username: u.username,
@@ -72,13 +78,13 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     };
   };
 
-  const startSession = (c: Context, userId: number) => {
+  const startSession = async (c: Context, userId: number) => {
     const token = crypto.randomBytes(32).toString('base64url');
-    db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(
+    await db.run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', [
       hashToken(token),
       userId,
       now() + SESSION_TTL_MS,
-    );
+    ]);
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
       sameSite: 'Lax',
@@ -88,15 +94,16 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     });
   };
 
-  const currentUser = (c: Context): UserRow | undefined => {
+  const currentUser = async (c: Context): Promise<UserRow | undefined> => {
     const token = getCookie(c, SESSION_COOKIE);
     if (!token) return undefined;
-    const row = db
-      .prepare('SELECT user_id, expires_at FROM sessions WHERE token_hash = ?')
-      .get(hashToken(token)) as { user_id: number; expires_at: number } | undefined;
+    const row = await db.get<{ user_id: number; expires_at: number }>(
+      'SELECT user_id, expires_at FROM sessions WHERE token_hash = ?',
+      [hashToken(token)],
+    );
     if (!row) return undefined;
     if (row.expires_at < now()) {
-      db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+      await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
       return undefined;
     }
     return getUser(row.user_id);
@@ -123,15 +130,16 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     if (password.length < 6 || password.length > 72) return fail(c, '密码长度需在 6-72 位之间');
     const key = `reg:${clientIp(c)}`;
     if (throttled(key)) return fail(c, '操作过于频繁，请稍后再试', 429);
-    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) return fail(c, '用户名已被使用', 409);
+    if (await db.get('SELECT 1 FROM users WHERE username = ?', [username])) return fail(c, '用户名已被使用', 409);
     const hash = await bcrypt.hash(password, 10);
     try {
-      const info = db
-        .prepare('INSERT INTO users (username, password_hash, energy, coins, created_at) VALUES (?, ?, ?, 0, ?)')
-        .run(username, hash, START_ENERGY, now());
+      const info = await db.run(
+        'INSERT INTO users (username, password_hash, energy, coins, created_at) VALUES (?, ?, ?, 0, ?)',
+        [username, hash, START_ENERGY, now()],
+      );
       noteFailure(key);
-      startSession(c, Number(info.lastInsertRowid));
-      return c.json({ user: toPublic(getUser(Number(info.lastInsertRowid))!) });
+      await startSession(c, info.lastId);
+      return c.json({ user: await toPublic((await getUser(info.lastId))!) });
     } catch {
       return fail(c, '用户名已被使用', 409);
     }
@@ -143,54 +151,55 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     const password = typeof b.password === 'string' ? b.password : '';
     const key = `login:${clientIp(c)}:${username.toLowerCase()}`;
     if (throttled(key)) return fail(c, '尝试次数过多，请 10 分钟后再试', 429);
-    const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as UserRow | undefined;
+    const u = await db.get<UserRow>('SELECT * FROM users WHERE username = ?', [username]);
     const ok = u ? await bcrypt.compare(password, u.password_hash) : false;
     if (!u || !ok) {
       noteFailure(key);
       return fail(c, '用户名或密码错误', 401);
     }
     failures.delete(key);
-    startSession(c, u.id);
-    return c.json({ user: toPublic(u) });
+    await startSession(c, u.id);
+    return c.json({ user: await toPublic(u) });
   });
 
-  app.post('/api/logout', (c) => {
+  app.post('/api/logout', async (c) => {
     const token = getCookie(c, SESSION_COOKIE);
-    if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+    if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
     deleteCookie(c, SESSION_COOKIE, { path: '/' });
     return c.json({ ok: true });
   });
 
-  app.get('/api/me', (c) => {
-    const u = currentUser(c);
-    return c.json({ user: u ? toPublic(u) : null });
+  app.get('/api/me', async (c) => {
+    const u = await currentUser(c);
+    return c.json({ user: u ? await toPublic(u) : null, mode: db.mode });
   });
 
-  app.get('/api/config', (c) => c.json({ items: ITEMS, packs: TOPUP_PACKS, maxWishLength: MAX_WISH_LENGTH }));
+  app.get('/api/config', (c) =>
+    c.json({ items: ITEMS, packs: TOPUP_PACKS, maxWishLength: MAX_WISH_LENGTH, mode: db.mode }),
+  );
 
-  app.post('/api/checkin', (c) => {
-    const u = currentUser(c);
+  app.post('/api/checkin', async (c) => {
+    const u = await currentUser(c);
     if (!u) return fail(c, '请先登录', 401);
-    const tx = db.transaction(() => {
-      const fresh = getUser(u.id)!;
+    const gained = await db.tx(async (t) => {
+      const fresh = (await getUser(u.id, t))!;
       if (fresh.last_checkin === today()) return null;
       const streak = fresh.last_checkin === yesterday() ? fresh.streak + 1 : 1;
-      const gained = checkinReward(streak);
-      db.prepare('UPDATE users SET energy = energy + ?, streak = ?, last_checkin = ? WHERE id = ?').run(
-        gained,
+      const reward = checkinReward(streak);
+      await t.run('UPDATE users SET energy = energy + ?, streak = ?, last_checkin = ? WHERE id = ?', [
+        reward,
         streak,
         today(),
         u.id,
-      );
-      return gained;
+      ]);
+      return reward;
     });
-    const gained = tx();
     if (gained === null) return fail(c, '今天已经签到过了', 409);
-    return c.json({ gained, user: toPublic(getUser(u.id)!) });
+    return c.json({ gained, user: await toPublic((await getUser(u.id))!) });
   });
 
   app.post('/api/pray', async (c) => {
-    const u = currentUser(c);
+    const u = await currentUser(c);
     if (!u) return fail(c, '请先登录', 401);
     const b = await body(c);
     const item = ITEMS.find((i) => i.id === b.item);
@@ -199,60 +208,71 @@ export function createApp({ db, timeZone = 'Asia/Shanghai', now = Date.now }: Ap
     if (!text) return fail(c, '请写下你的心愿');
     if ([...text].length > MAX_WISH_LENGTH) return fail(c, `心愿最多 ${MAX_WISH_LENGTH} 字`);
 
-    const tx = db.transaction(() => {
-      const fresh = getUser(u.id)!;
+    const res = await db.tx(async (t) => {
+      const fresh = (await getUser(u.id, t))!;
       const balance = item.currency === 'energy' ? fresh.energy : fresh.coins;
-      if (balance < item.cost) return { error: item.currency === 'energy' ? '能量不足，去签到或使用福币道具吧' : '福币不足，请先充值' };
-      if (item.currency === 'energy') {
-        db.prepare('UPDATE users SET energy = energy - ? + ? WHERE id = ?').run(item.cost, item.reward, u.id);
-      } else {
-        db.prepare('UPDATE users SET coins = coins - ?, energy = energy + ? WHERE id = ?').run(item.cost, item.reward, u.id);
+      if (balance < item.cost) {
+        return { error: item.currency === 'energy' ? '能量不足，去签到或使用福币道具吧' : '福币不足，请先充值' };
       }
-      const { n } = db.prepare('SELECT COUNT(*) AS n FROM prayers').get() as { n: number };
-      const info = db
-        .prepare('INSERT INTO prayers (user_id, item_type, text, position, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(u.id, item.id, text, n, now());
-      return { id: Number(info.lastInsertRowid), position: n };
+      if (item.currency === 'energy') {
+        await t.run('UPDATE users SET energy = energy - ? + ? WHERE id = ?', [item.cost, item.reward, u.id]);
+      } else {
+        await t.run('UPDATE users SET coins = coins - ?, energy = energy + ? WHERE id = ?', [item.cost, item.reward, u.id]);
+      }
+      const row = await t.get<{ n: number }>('SELECT COUNT(*) AS n FROM prayers');
+      const position = row?.n ?? 0;
+      const info = await t.run(
+        'INSERT INTO prayers (user_id, item_type, text, position, created_at) VALUES (?, ?, ?, ?, ?)',
+        [u.id, item.id, text, position, now()],
+      );
+      return { id: info.lastId, position };
     });
-    const res = tx();
-    if ('error' in res) return fail(c, res.error!, 402);
-    const user = toPublic(getUser(u.id)!);
+    if ('error' in res) return fail(c, res.error as string, 402);
     const tag: PrayerTag = {
-      id: res.id!,
+      id: res.id,
       itemType: item.id,
       text,
-      position: res.position!,
+      position: res.position,
       username: u.username,
       createdAt: now(),
       mine: true,
     };
-    return c.json({ tag, reward: item.reward, user });
+    return c.json({ tag, reward: item.reward, user: await toPublic((await getUser(u.id))!) });
   });
 
   app.post('/api/topup', async (c) => {
-    const u = currentUser(c);
+    const u = await currentUser(c);
     if (!u) return fail(c, '请先登录', 401);
     const b = await body(c);
     const pack = TOPUP_PACKS.find((p) => p.id === b.pack);
     if (!pack) return fail(c, '请选择充值档位');
-    db.transaction(() => {
-      db.prepare('UPDATE users SET coins = coins + ? WHERE id = ?').run(pack.coins, u.id);
-      db.prepare('INSERT INTO topups (user_id, pack_id, coins, created_at) VALUES (?, ?, ?, ?)').run(u.id, pack.id, pack.coins, now());
-    })();
-    return c.json({ added: pack.coins, demo: true, user: toPublic(getUser(u.id)!) });
+    await db.tx(async (t) => {
+      await t.run('UPDATE users SET coins = coins + ? WHERE id = ?', [pack.coins, u.id]);
+      await t.run('INSERT INTO topups (user_id, pack_id, coins, created_at) VALUES (?, ?, ?, ?)', [u.id, pack.id, pack.coins, now()]);
+    });
+    return c.json({ added: pack.coins, demo: true, user: await toPublic((await getUser(u.id))!) });
   });
 
-  app.get('/api/prayers', (c) => {
-    const me = currentUser(c);
-    const rows = db
-      .prepare(
-        `SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username
-         FROM prayers p JOIN users u ON u.id = p.user_id
-         ORDER BY p.id DESC LIMIT ?`,
-      )
-      .all(TAG_LIMIT) as Array<{ id: number; item_type: PrayerTag['itemType']; text: string; position: number; created_at: number; user_id: number; username: string }>;
-    const { total } = db.prepare('SELECT COUNT(*) AS total FROM prayers').get() as { total: number };
-    const { recent } = db.prepare('SELECT COUNT(*) AS recent FROM prayers WHERE created_at > ?').get(now() - 24 * 3600 * 1000) as { recent: number };
+  app.get('/api/prayers', async (c) => {
+    const me = await currentUser(c);
+    const rows = await db.all<{
+      id: number;
+      item_type: PrayerTag['itemType'];
+      text: string;
+      position: number;
+      created_at: number;
+      user_id: number;
+      username: string;
+    }>(
+      `SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username
+       FROM prayers p JOIN users u ON u.id = p.user_id
+       ORDER BY p.id DESC LIMIT ?`,
+      [TAG_LIMIT],
+    );
+    const total = (await db.get<{ total: number }>('SELECT COUNT(*) AS total FROM prayers'))?.total ?? 0;
+    const recent =
+      (await db.get<{ recent: number }>('SELECT COUNT(*) AS recent FROM prayers WHERE created_at > ?', [now() - 24 * 3600 * 1000]))
+        ?.recent ?? 0;
     const tags: PrayerTag[] = rows.reverse().map((r) => ({
       id: r.id,
       itemType: r.item_type,
