@@ -244,7 +244,7 @@ function wingGeometry(kind: 'butterfly' | 'dragonfly' | 'bird'): THREE.BufferGeo
     return mergeGeometries(parts)!;
   }
   const v: number[] = [];
-  const wing = [[0.05, 0, 0.12], [0.45, 0.02, 0.08], [0.95, 0.06, -0.12], [0.62, 0.03, -0.2], [0.05, 0, -0.18]];
+  const wing = [[0.05, 0, 0.14], [0.45, 0.1, 0.1], [0.98, 0.26, -0.12], [0.62, 0.14, -0.24], [0.05, 0, -0.2]];
   for (const m of [false, true]) v.push(...fan(wing, m));
   v.push(0, 0.03, 0.38, -0.07, 0, 0.0, 0.07, 0, 0.0, -0.07, 0, 0.0, 0, 0.02, -0.5, 0.07, 0, 0.0);
   v.push(-0.09, 0, -0.24, 0, 0, -0.62, 0.09, 0, -0.24);
@@ -426,7 +426,7 @@ export class Fauna {
     im.frustumCulled = false;
     im.castShadow = false;
     for (let i = 0; i < n; i++) {
-      this.birdData.push({ angle: this.rng() * 6.28, radius: 16 + this.rng() * 28, height: 9 + this.rng() * 15, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
+      this.birdData.push({ angle: this.rng() * 6.28, radius: 18 + this.rng() * 32, height: 16 + this.rng() * 26, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
       im.setColorAt(i, new THREE.Color().setScalar(0.8 + this.rng() * 0.3));
     }
     this.birds = im;
@@ -631,7 +631,7 @@ export class Fauna {
         const y = b.height + Math.sin(env.time * 0.4 + b.bob) * 2;
         d.position.set(x, y, z);
         d.rotation.set(0, -b.angle + (b.speed > 0 ? Math.PI : 0) + Math.PI / 2 * (b.speed > 0 ? 1 : -1) + Math.PI, Math.sin(env.time * 0.5 + b.bob) * 0.25);
-        d.scale.setScalar(this.id === 'desert' ? 4.6 : 3.8);
+        d.scale.setScalar(this.id === 'desert' ? 5.6 : 4.6);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });

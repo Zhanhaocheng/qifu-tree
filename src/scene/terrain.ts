@@ -228,6 +228,14 @@ const LOOK: Record<TerrainId, { soil: string; moss: string; dry: string; pebble:
   snow: { soil: '#5a4a3c', moss: '#bcc9d8', dry: '#c9c39a', pebble: { light: '#c9ccd2', dark: '#6a6e76' }, litter: ['#d8d6c8', '#a89a7a', '#e9e6dc'] },
 };
 
+const HAZE: Record<TerrainId, [number, number, number]> = {
+  mountain: [0.78, 0.95, 1.32],
+  bamboo: [0.8, 1.1, 1.0],
+  jiangnan: [0.88, 1.0, 1.15],
+  desert: [1.22, 0.96, 0.74],
+  snow: [0.8, 0.96, 1.3],
+};
+
 const RIDGE_VERT = /* glsl */ `
   attribute float aTop;
   varying vec3 vWorld; varying float vH; varying float vTop;
@@ -239,7 +247,7 @@ const RIDGE_VERT = /* glsl */ `
 `;
 const RIDGE_FRAG = /* glsl */ `
   uniform vec3 uColor; uniform vec3 uFog; uniform vec3 uLight; uniform vec3 uSunDir; uniform vec3 uSunColor;
-  uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
+  uniform vec3 uHazeTint; uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
   varying vec3 vWorld; varying float vH; varying float vTop;
   ${NOISE_GLSL}
   float fbm4(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; } return s; }
@@ -267,7 +275,8 @@ const RIDGE_FRAG = /* glsl */ `
     float drift = fbm4(vec2(theta * 3.0 + uTime * 0.012, vH * 0.045));
     float bands = smoothstep(0.35, 0.8, drift) * smoothstep(uTop * 0.85, uTop * 0.15, vH);
     float mist = clamp(uMist + foot * 0.85 + bands * 0.4 + (1.0 - lightK) * 0.06, 0.0, 1.0);
-    col = mix(col, uFog, mist);
+    vec3 haze = uFog * uHazeTint;
+    col = mix(col, haze, mist);
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -332,13 +341,13 @@ function expandRidges(src: Ridge[]): Ridge[] {
     const snowLine = a.snowLine !== undefined || b.snowLine !== undefined ? mixv(a.snowLine ?? b.snowLine!, b.snowLine ?? a.snowLine!) : undefined;
     out.push({
       radius: mixv(a.radius, b.radius) * (0.9 + i * 0.03),
-      base: mixv(a.base, b.base) * 0.7,
-      amp: mixv(a.amp, b.amp) * 0.62 * (1 + (i % 2 ? 0.1 : -0.08)),
+      base: mixv(a.base, b.base) * 0.55,
+      amp: mixv(a.amp, b.amp) * 0.64 * (1 + (i % 2 ? 0.1 : -0.08)),
       freq: mixv(a.freq, b.freq) * (i % 2 ? 1.18 : 0.9),
       sharp: mixv(a.sharp, b.sharp),
       color: `#${c0.getHexString()}`,
-      mist: clamp(0.2 + 0.62 * Math.pow(i / (N - 1), 0.85) + (mixv(a.mist, b.mist) - 0.3) * 0.3, 0.12, 0.88),
-      snowLine: snowLine !== undefined ? snowLine * 0.62 : undefined,
+      mist: clamp(0.03 + 0.8 * Math.pow(i / (N - 1), 1.1) + (mixv(a.mist, b.mist) - 0.3) * 0.12, 0.02, 0.86),
+      snowLine: snowLine !== undefined ? snowLine * 0.5 : undefined,
     });
   }
   return out;
@@ -490,6 +499,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
         uTime: { value: 0 },
         uNight: { value: 0 },
         uInk: { value: inkStrength },
+        uHazeTint: { value: new THREE.Vector3(...HAZE[id]) },
       },
       vertexShader: RIDGE_VERT,
       fragmentShader: RIDGE_FRAG,

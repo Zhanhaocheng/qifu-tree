@@ -11,7 +11,7 @@ import { applyHeightFog } from './fogPatch';
 import { Fx3D } from './fx3d';
 import { Fauna, Particles, type AnimalSound } from './fauna';
 import { Kit } from './props';
-import { SkyRig, glowTexture } from './sky';
+import { NOISE_GLSL, SkyRig, glowTexture, noiseTexture } from './sky';
 import { createGodRayPass, createGradePass } from './post';
 import type { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { TERRACE_H, TERRACE_R, build as buildTerrain, type TerrainWorld } from './terrain';
@@ -55,10 +55,10 @@ function makeTagGeometry(id: ItemId): THREE.BufferGeometry {
       return g;
     }
     case 'ribbon': {
-      const g = new THREE.PlaneGeometry(0.16, 1.0, 2, 8);
-      g.translate(0, -0.5, 0);
+      const g = new THREE.PlaneGeometry(0.3, 0.75, 2, 8);
+      g.translate(0, -0.375, 0);
       const pos = g.attributes.position;
-      for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin(pos.getY(i) * 7) * 0.03);
+      for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin(pos.getY(i) * 9) * 0.03);
       g.computeVertexNormals();
       return g;
     }
@@ -179,6 +179,8 @@ export class QifuScene {
   private restoreView: { target: THREE.Vector3; pos: THREE.Vector3 } | null = null;
   private cameraTween: { t0: number; dur: number; fromDist: number; toDist: number; fromTargetY: number; toTargetY: number } | null = null;
   private lockQuality: boolean;
+  private dprScale = 1;
+  private calmSeconds = 0;
   private isolated = false;
   private intro: { t0: number; dur: number } | null = null;
   private introPending = false;
@@ -200,7 +202,9 @@ export class QifuScene {
     this.introPending = opts.intro ?? new URLSearchParams(location.search).get('intro') !== '0';
     if (this.introPending) this.armIntro();
     const coarse = matchMedia('(pointer: coarse)').matches || innerWidth < 720;
-    this.quality = opts.quality ?? (coarse ? 'medium' : 'high');
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    const weak = (nav.hardwareConcurrency ?? 8) <= 4 || (nav.deviceMemory ?? 8) <= 3;
+    this.quality = opts.quality ?? (coarse ? (weak ? 'low' : 'medium') : weak ? 'medium' : 'high');
     this.lockQuality = !!opts.quality;
     this.hourOverride = opts.hour ?? null;
 
@@ -222,6 +226,24 @@ export class QifuScene {
     this.scene.add(this.hemi, this.key, this.key.target);
 
     this.barkMat = new THREE.MeshStandardMaterial({ roughness: 0.96, color: '#ffffff', normalScale: new THREE.Vector2(1.6, 1.6) });
+    this.barkMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uNoise = { value: noiseTexture() };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWN; varying vec3 vWP;')
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvWN = normalize(mat3(modelMatrix) * objectNormal);')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWN; varying vec3 vWP;\n' + NOISE_GLSL)
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+           float bn = vnoise(vWP.xz * 1.3 + vWP.y * 0.6) * 0.65 + vnoise(vWP.xz * 5.0 + vWP.y * 2.0) * 0.35;
+           float mossUp = smoothstep(0.25, 0.75, vWN.y + (bn - 0.5) * 0.9);
+           float mossLow = smoothstep(2.6, 0.2, vWP.y) * smoothstep(0.3, 0.7, bn);
+           float mk = clamp(mossUp * 0.8 + mossLow * 0.6, 0.0, 1.0) * smoothstep(0.55, 0.3, vWP.y * 0.05);
+           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.12, 0.22, 0.06) * (0.7 + bn), mk * 0.85);`,
+        );
+    };
     this.leafMat = this.makeLeafMaterial();
     this.scene.add(this.treeGroup);
 
@@ -245,7 +267,7 @@ export class QifuScene {
         mat.onBeforeCompile = (shader) => {
           shader.vertexShader = shader.vertexShader
             .replace('#include <common>', '#include <common>\nattribute float aGlyph;')
-            .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_MAP\nvMapUv.x = (vMapUv.x + aGlyph) * 0.25;\n#endif');
+            .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_MAP\nvMapUv.x = (vMapUv.x + aGlyph) * 0.125;\n#endif');
         };
       }
       this.tagMats.set(item.id, mat);
@@ -434,7 +456,7 @@ export class QifuScene {
 
   private applyQuality() {
     const q = this.quality;
-    const dpr = Math.min(devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1);
+    const dpr = Math.min(devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1) * this.dprScale;
     this.renderer.setPixelRatio(dpr);
     this.sky.setPixelRatio(dpr);
     this.sky.setQuality(q);
@@ -519,7 +541,7 @@ export class QifuScene {
     const p = STAGE_PARAMS[stage];
     this.controls.minDistance = 3.5;
     this.controls.maxDistance = p.cameraDistance * 2.6;
-    const targetY = TERRACE_H + this.treeHeight * 0.44;
+    const targetY = TERRACE_H + this.treeHeight * 0.5;
     if (first) {
       const v = this.viewFor(stage);
       this.controls.target.copy(v.target);
@@ -543,8 +565,8 @@ export class QifuScene {
   private viewFor(stage: number) {
     const p = STAGE_PARAMS[stage];
     const narrow = this.camera.aspect < 0.8;
-    const target = new THREE.Vector3(0, TERRACE_H + this.treeHeight * 0.44, 0);
-    const dir = new THREE.Vector3(0.28, 0.13, 1).normalize();
+    const target = new THREE.Vector3(0, TERRACE_H + this.treeHeight * 0.5, 0);
+    const dir = new THREE.Vector3(0.28, 0.07, 1).normalize();
     const pos = target.clone().addScaledVector(dir, p.cameraDistance * (narrow ? 1.5 : 1));
     return { target, pos };
   }
@@ -794,7 +816,7 @@ export class QifuScene {
       const idx = counters.get(tag.itemType) ?? 0;
       counters.set(tag.itemType, idx + 1);
       const attr = this.glyphAttrs.get(tag.itemType)!;
-      attr.setX(idx, tag.id % 4);
+      attr.setX(idx, tag.id % 8);
     }
     for (const [id, mesh] of this.tagMeshes) {
       mesh.count = this.byType.get(id)!.length;
@@ -1104,15 +1126,40 @@ export class QifuScene {
   }
 
   private monitorPerformance(dt: number) {
-    if (document.hidden || this.lockQuality) return;
+    if (document.hidden || this.lockQuality || this.intro === null && this.introPending) return;
     this.fpsFrames++;
     this.fpsTime += dt;
-    if (this.fpsTime < 5) return;
+    if (this.fpsTime < 3) return;
     const fps = this.fpsFrames / this.fpsTime;
     this.fpsFrames = 0;
     this.fpsTime = 0;
     const idx = QUALITIES.indexOf(this.quality);
-    if (fps < 22 && idx > 0) this.setQuality(QUALITIES[idx - 1]);
+    if (fps < 34) {
+      this.calmSeconds = 0;
+      if (this.dprScale > 0.66) {
+        this.dprScale = Math.max(0.66, this.dprScale - 0.14);
+        this.applyPixelRatio();
+      } else if (fps < 24 && idx > 0) {
+        this.dprScale = 1;
+        this.setQuality(QUALITIES[idx - 1]);
+      }
+    } else if (fps > 56 && this.dprScale < 1) {
+      this.calmSeconds += 3;
+      if (this.calmSeconds >= 12) {
+        this.calmSeconds = 0;
+        this.dprScale = Math.min(1, this.dprScale + 0.1);
+        this.applyPixelRatio();
+      }
+    }
+  }
+
+  private applyPixelRatio() {
+    const q = this.quality;
+    const dpr = Math.min(devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1) * this.dprScale;
+    this.renderer.setPixelRatio(dpr);
+    this.sky.setPixelRatio(dpr);
+    this.composer?.setPixelRatio(dpr);
+    this.resize();
   }
 }
 

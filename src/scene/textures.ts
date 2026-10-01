@@ -259,43 +259,59 @@ export function waterNormal(size = 256): THREE.Texture {
 }
 
 export function leafTexture(): THREE.CanvasTexture {
-  const size = 256;
+  const size = 512;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d')!;
   g.clearRect(0, 0, size, size);
-  const rng = (() => {
-    let s = 12345;
-    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
-  })();
+  const rng = rnd(12345);
+  const k = size / 256;
   const leaf = (x: number, y: number, len: number, wid: number, rot: number, tone: number) => {
     g.save();
-    g.translate(x, y);
+    g.translate(x * k, y * k);
     g.rotate(rot);
+    len *= k;
+    wid *= k;
+    const a = Math.round(140 + tone * 100);
     const grad = g.createLinearGradient(0, 0, 0, -len);
-    const a = Math.round(150 + tone * 90);
-    grad.addColorStop(0, `rgb(${a * 0.72},${a * 0.72},${a * 0.72})`);
-    grad.addColorStop(1, `rgb(${Math.min(255, a * 1.15)},${Math.min(255, a * 1.15)},${Math.min(255, a * 1.15)})`);
+    grad.addColorStop(0, `rgb(${a * 0.62},${a * 0.62},${a * 0.62})`);
+    grad.addColorStop(0.6, `rgb(${a},${a},${a})`);
+    grad.addColorStop(1, `rgb(${Math.min(255, a * 1.2)},${Math.min(255, a * 1.2)},${Math.min(255, a * 1.2)})`);
     g.fillStyle = grad;
+    g.strokeStyle = 'rgba(20,24,16,0.65)';
+    g.lineWidth = 1.6 * k * 0.6;
     g.beginPath();
     g.moveTo(0, 0);
-    g.bezierCurveTo(wid, -len * 0.25, wid * 0.8, -len * 0.8, 0, -len);
-    g.bezierCurveTo(-wid * 0.8, -len * 0.8, -wid, -len * 0.25, 0, 0);
+    g.bezierCurveTo(wid, -len * 0.2, wid * 0.9, -len * 0.78, 0, -len);
+    g.bezierCurveTo(-wid * 0.9, -len * 0.78, -wid, -len * 0.2, 0, 0);
     g.fill();
-    g.strokeStyle = 'rgba(40,40,40,0.55)';
-    g.lineWidth = 1.2;
+    g.stroke();
+    g.strokeStyle = 'rgba(30,34,20,0.5)';
+    g.lineWidth = 1.4 * k * 0.6;
     g.beginPath();
     g.moveTo(0, 0);
-    g.lineTo(0, -len * 0.92);
+    g.lineTo(0, -len * 0.94);
     g.stroke();
+    g.lineWidth = 0.8 * k * 0.6;
+    g.strokeStyle = 'rgba(30,34,20,0.32)';
+    for (let v = 1; v <= 5; v++) {
+      const vy = -len * (0.14 + v * 0.14);
+      const reach = wid * 0.78 * Math.sin((v / 6.2) * Math.PI) ;
+      for (const sdir of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(0, vy);
+        g.lineTo(sdir * reach, vy - len * 0.1);
+        g.stroke();
+      }
+    }
     g.restore();
   };
-  for (let i = 0; i < 26; i++) {
-    const a = (i / 26) * Math.PI * 2 + rng() * 0.4;
-    const r = 20 + rng() * 60;
-    leaf(size / 2 + Math.cos(a) * r * 0.5, size / 2 + 28 + Math.sin(a) * r * 0.5, 62 + rng() * 34, 17 + rng() * 9, a + Math.PI / 2 + (rng() - 0.5) * 0.6, rng());
+  for (let i = 0; i < 46; i++) {
+    const ang = (i / 46) * Math.PI * 2 + rng() * 0.4;
+    const r = 26 + rng() * 62;
+    leaf(128 + Math.cos(ang) * r * 0.5, 156 + Math.sin(ang) * r * 0.5, 56 + rng() * 34, 17 + rng() * 9, ang + Math.PI / 2 + (rng() - 0.5) * 0.6, rng());
   }
-  for (let i = 0; i < 14; i++) leaf(size / 2 + (rng() - 0.5) * 40, size / 2 + 40, 70 + rng() * 40, 18 + rng() * 8, (rng() - 0.5) * 2.4, rng());
+  for (let i = 0; i < 22; i++) leaf(128 + (rng() - 0.5) * 50, 168, 66 + rng() * 40, 18 + rng() * 8, (rng() - 0.5) * 2.5, rng());
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -338,63 +354,199 @@ export function moonTexture(): THREE.CanvasTexture {
   return t;
 }
 
-/** 祈福牌书法字图集：每个道具一张，横向 4 格，每格一个字 */
+import brushUrl from './assets/brush.woff2?url';
+
+export const BRUSH_FONT = '"QifuBrush","STKaiti","KaiTi","Kaiti SC","楷体","Noto Serif SC","Songti SC","WenQuanYi Micro Hei",serif';
+let brushReady = false;
+const brushWaiters: (() => void)[] = [];
+
+export function whenBrush(cb: () => void) {
+  if (brushReady) cb();
+  else brushWaiters.push(cb);
+}
+
+if (typeof FontFace !== 'undefined') {
+  new FontFace('QifuBrush', `url(${brushUrl})`)
+    .load()
+    .then((face) => {
+      document.fonts.add(face);
+      brushReady = true;
+      brushWaiters.splice(0).forEach((w) => w());
+    })
+    .catch(() => undefined);
+}
+
+/** 祈福牌书法字图集：每个道具一张，横向 8 格，每格一个字 */
+export const GLYPH_COLS = 8;
 export const GLYPHS: Record<string, string[]> = {
-  wood: ['福', '安', '愿', '顺'],
-  ribbon: ['心', '想', '事', '成'],
-  gold: ['喜', '寿', '康', '禄'],
-  lantern: ['福', '吉', '祥', '瑞'],
-  lotus: ['莲', '福', '和', '缘'],
+  wood: ['福', '安', '愿', '顺', '平', '如', '意', '吉'],
+  ribbon: ['心', '想', '事', '成', '如', '意', '顺', '遂'],
+  gold: ['喜', '寿', '康', '禄', '财', '运', '福', '泰'],
+  lantern: ['福', '吉', '祥', '瑞', '福', '吉', '祥', '瑞'],
+  lotus: ['莲', '福', '和', '缘', '莲', '福', '和', '缘'],
 };
+
+function rnd(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function inkGlyph(g: CanvasRenderingContext2D, ch: string, x: number, y: number, size: number, ink: string, rot: number) {
+  g.save();
+  g.translate(x, y);
+  g.rotate(rot);
+  g.font = `${size}px ${BRUSH_FONT}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = ink;
+  g.shadowColor = ink;
+  g.shadowBlur = 4;
+  g.globalAlpha = 0.55;
+  g.fillText(ch, 0, 0);
+  g.shadowBlur = 0;
+  g.globalAlpha = 1;
+  g.fillText(ch, 0, 0);
+  g.restore();
+}
+
+function seal(g: CanvasRenderingContext2D, x: number, y: number, size: number, color: string, ch: string, textColor: string) {
+  g.save();
+  g.translate(x, y);
+  g.fillStyle = color;
+  g.beginPath();
+  g.roundRect(-size / 2, -size / 2, size, size, size * 0.12);
+  g.fill();
+  g.fillStyle = textColor;
+  g.font = `${size * 0.72}px ${BRUSH_FONT}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(ch, 0, size * 0.04);
+  g.restore();
+}
 
 export function glyphAtlas(type: string, bg: string, ink: string, extra: 'wood' | 'plain' = 'plain'): THREE.CanvasTexture {
   const cw = 128;
   const ch = 256;
   const c = document.createElement('canvas');
-  c.width = cw * 4;
+  c.width = cw * GLYPH_COLS;
   c.height = ch;
   const g = c.getContext('2d')!;
   const chars = GLYPHS[type] ?? GLYPHS.wood;
-  for (let i = 0; i < 4; i++) {
-    const x0 = i * cw;
-    const grd = g.createLinearGradient(x0, 0, x0 + cw, ch);
-    grd.addColorStop(0, bg);
-    grd.addColorStop(1, bg);
-    g.fillStyle = grd;
-    g.fillRect(x0, 0, cw, ch);
-    if (extra === 'wood') {
-      for (let k = 0; k < 40; k++) {
-        g.strokeStyle = `rgba(60,30,10,${0.04 + Math.random() * 0.08})`;
-        g.lineWidth = 1 + Math.random() * 1.5;
-        const y = Math.random() * ch;
-        g.beginPath();
-        g.moveTo(x0, y);
-        g.bezierCurveTo(x0 + cw * 0.3, y + (Math.random() - 0.5) * 10, x0 + cw * 0.7, y + (Math.random() - 0.5) * 10, x0 + cw, y);
-        g.stroke();
-      }
-    }
-    g.save();
-    g.beginPath();
-    g.rect(x0, 0, cw, ch);
-    g.clip();
-    g.fillStyle = ink;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.font = `900 ${type === 'ribbon' ? 84 : 104}px "STKaiti","KaiTi","Kaiti SC","楷体","Noto Serif SC","Songti SC","WenQuanYi Micro Hei",serif`;
-    g.shadowColor = 'rgba(0,0,0,0.25)';
-    g.shadowBlur = 3;
-    g.translate(x0 + cw / 2, ch * 0.5);
-    g.rotate((Math.random() - 0.5) * 0.12);
-    g.fillText(chars[i], 0, 0);
-    g.fillText(chars[i], 0.8, 0.5);
-    g.restore();
-    g.fillStyle = ink;
-    g.globalAlpha = 0.5;
-    g.fillRect(x0 + cw / 2 - 3, 8, 6, 6);
-    g.globalAlpha = 1;
-  }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+
+  const draw = () => {
+    const r = rnd(type.length * 977);
+    for (let i = 0; i < GLYPH_COLS; i++) {
+      const x0 = i * cw;
+      g.save();
+      g.beginPath();
+      g.rect(x0, 0, cw, ch);
+      g.clip();
+      g.translate(x0, 0);
+      if (type === 'wood') {
+        const grd = g.createLinearGradient(0, 0, cw, 0);
+        grd.addColorStop(0, '#a87a45');
+        grd.addColorStop(0.5, '#cfa066');
+        grd.addColorStop(1, '#9a6c3a');
+        g.fillStyle = grd;
+        g.fillRect(0, 0, cw, ch);
+        for (let k = 0; k < 70; k++) {
+          g.strokeStyle = `rgba(70,36,12,${0.05 + r() * 0.13})`;
+          g.lineWidth = 0.6 + r() * 1.6;
+          const gx = r() * cw;
+          g.beginPath();
+          g.moveTo(gx, 0);
+          g.bezierCurveTo(gx + (r() - 0.5) * 14, ch * 0.3, gx + (r() - 0.5) * 14, ch * 0.7, gx + (r() - 0.5) * 8, ch);
+          g.stroke();
+        }
+        g.fillStyle = 'rgba(60,30,10,0.35)';
+        g.beginPath();
+        g.ellipse(30 + r() * 70, 150 + r() * 80, 5, 9, 0, 0, Math.PI * 2);
+        g.fill();
+        g.strokeStyle = 'rgba(40,20,6,0.7)';
+        g.lineWidth = 6;
+        g.strokeRect(3, 3, cw - 6, ch - 6);
+        g.strokeStyle = 'rgba(255,220,160,0.25)';
+        g.lineWidth = 2;
+        g.strokeRect(9, 9, cw - 18, ch - 18);
+        g.fillStyle = 'rgba(40,20,6,0.85)';
+        g.beginPath();
+        g.arc(cw / 2, 20, 6, 0, Math.PI * 2);
+        g.fill();
+        g.globalAlpha = 0.45;
+        g.fillStyle = '#ffe9c0';
+        g.save();
+        g.translate(1.6, 1.8);
+        g.font = `112px ${BRUSH_FONT}`;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(chars[i], cw / 2, 118);
+        g.restore();
+        g.globalAlpha = 1;
+        inkGlyph(g, chars[i], cw / 2, 118, 112, '#2a1407', (r() - 0.5) * 0.1);
+        seal(g, cw / 2, 218, 28, '#b3202a', '祈', '#ffe9c0');
+      } else if (type === 'ribbon') {
+        const grd = g.createLinearGradient(0, 0, cw, 0);
+        grd.addColorStop(0, '#9c1620');
+        grd.addColorStop(0.35, '#d8343a');
+        grd.addColorStop(0.7, '#c42a30');
+        grd.addColorStop(1, '#8c121c');
+        g.fillStyle = grd;
+        g.fillRect(0, 0, cw, ch);
+        for (let k = 0; k < 40; k++) {
+          g.fillStyle = `rgba(255,200,200,${0.03 + (k % 2) * 0.03})`;
+          g.fillRect(k * 3.4, 0, 1, ch);
+        }
+        g.fillStyle = '#e9c46a';
+        g.fillRect(6, 0, 3, ch);
+        g.fillRect(cw - 9, 0, 3, ch);
+        inkGlyph(g, chars[i], cw / 2, 98, 96, '#f6d776', (r() - 0.5) * 0.08);
+        inkGlyph(g, '福', cw / 2, 190, 40, '#f6d776', 0);
+      } else {
+        const grd = g.createLinearGradient(0, 0, cw, ch);
+        grd.addColorStop(0, '#f6d776');
+        grd.addColorStop(0.45, '#d9a43a');
+        grd.addColorStop(0.55, '#f9e49a');
+        grd.addColorStop(1, '#b9822a');
+        g.fillStyle = grd;
+        g.fillRect(0, 0, cw, ch);
+        g.strokeStyle = '#7a1410';
+        g.lineWidth = 4;
+        g.strokeRect(8, 8, cw - 16, ch - 16);
+        g.lineWidth = 1.5;
+        g.strokeRect(15, 15, cw - 30, ch - 30);
+        g.fillStyle = '#7a1410';
+        for (const [cx, cy] of [[22, 22], [cw - 22, 22], [22, ch - 22], [cw - 22, ch - 22]]) {
+          g.beginPath();
+          g.arc(cx, cy, 3.5, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.globalAlpha = 0.5;
+        g.fillStyle = '#fff6cf';
+        g.font = `108px ${BRUSH_FONT}`;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(chars[i], cw / 2 - 1.5, 114);
+        g.globalAlpha = 1;
+        inkGlyph(g, chars[i], cw / 2, 116, 108, '#7a1410', (r() - 0.5) * 0.08);
+        seal(g, cw / 2, 214, 26, '#7a1410', '福', '#f6d776');
+      }
+      void bg;
+      void ink;
+      void extra;
+      g.restore();
+    }
+    t.needsUpdate = true;
+  };
+  draw();
+  whenBrush(draw);
   return t;
 }

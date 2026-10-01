@@ -19,10 +19,10 @@ export interface StageParams {
 }
 
 export const STAGE_PARAMS: StageParams[] = [
-  { height: 4.8, splitHeight: 1.8, trunkRadius: 0.34, limbs: 4, limbLength: 2.7, levels: 2, roots: 5, leaves: 800, leafSize: 1.0, tagScale: 0.8, cameraDistance: 12.5, tagCapacity: 12, decor: 3 },
-  { height: 10, splitHeight: 3.8, trunkRadius: 0.72, limbs: 4, limbLength: 5.2, levels: 3, roots: 7, leaves: 3200, leafSize: 1.35, tagScale: 1.1, cameraDistance: 21, tagCapacity: 40, decor: 8 },
-  { height: 16, splitHeight: 5.8, trunkRadius: 1.25, limbs: 5, limbLength: 7.4, levels: 3, roots: 9, leaves: 8500, leafSize: 1.7, tagScale: 1.6, cameraDistance: 32, tagCapacity: 120, decor: 20 },
-  { height: 23, splitHeight: 8.2, trunkRadius: 2.0, limbs: 6, limbLength: 11, levels: 4, roots: 12, leaves: 17000, leafSize: 2.2, tagScale: 2.1, cameraDistance: 47, tagCapacity: 300, decor: 40 },
+  { height: 4.8, splitHeight: 1.8, trunkRadius: 0.46, limbs: 4, limbLength: 2.7, levels: 2, roots: 5, leaves: 800, leafSize: 1.0, tagScale: 0.8, cameraDistance: 12.5, tagCapacity: 12, decor: 3 },
+  { height: 10, splitHeight: 3.8, trunkRadius: 1.0, limbs: 4, limbLength: 5.2, levels: 3, roots: 7, leaves: 3200, leafSize: 1.35, tagScale: 1.1, cameraDistance: 21, tagCapacity: 40, decor: 8 },
+  { height: 16, splitHeight: 5.8, trunkRadius: 1.75, limbs: 5, limbLength: 7.4, levels: 3, roots: 9, leaves: 8500, leafSize: 1.7, tagScale: 1.6, cameraDistance: 40, tagCapacity: 120, decor: 20 },
+  { height: 23, splitHeight: 8.2, trunkRadius: 2.8, limbs: 6, limbLength: 11, levels: 4, roots: 12, leaves: 17000, leafSize: 2.2, tagScale: 2.1, cameraDistance: 70, tagCapacity: 300, decor: 40 },
 ];
 
 export interface TreeStyle {
@@ -291,7 +291,7 @@ export function buildTree(stage: number, leafBudget: number, style: TreeStyle, s
     const off = randUnit().multiplyScalar(spread * (0.3 + rng() * 0.9));
     off.y *= 0.75;
     pos.copy(c).add(off);
-    pos.y = Math.max(pos.y, 0.6 + rng() * 1.2);
+    pos.y = Math.max(pos.y, p.splitHeight * (0.82 + rng() * 0.25));
     euler.set((rng() - 0.5) * 1.6, rng() * Math.PI * 2, (rng() - 0.5) * 1.6);
     quat.setFromEuler(euler);
     const s = p.leafSize * (0.75 + rng() * 0.6);

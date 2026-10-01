@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { fbmWorld, surface } from './textures';
+import { BRUSH_FONT, fbmWorld, surface, whenBrush } from './textures';
 import { mulberry32 } from './tree';
 
 export interface Glow {
@@ -171,25 +171,32 @@ export function calligraphyTexture(text: string, bg: string, ink: string, vertic
   c.width = vertical ? 256 : 512;
   c.height = vertical ? 512 : 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = bg;
-  g.fillRect(0, 0, c.width, c.height);
-  g.fillStyle = ink;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  const font = '"STKaiti","KaiTi","Kaiti SC","楷体","Noto Serif SC","Songti SC","WenQuanYi Micro Hei",serif';
-  const chars = [...text];
-  if (vertical) {
-    const size = Math.min(150, (c.height - 40) / chars.length);
-    g.font = `900 ${size}px ${font}`;
-    chars.forEach((ch, i) => g.fillText(ch, c.width / 2, 30 + size * (i + 0.5)));
-  } else {
-    const size = Math.min(190, (c.width - 40) / chars.length);
-    g.font = `900 ${size}px ${font}`;
-    chars.forEach((ch, i) => g.fillText(ch, c.width / 2 + (i - (chars.length - 1) / 2) * size, c.height / 2 + 6));
-  }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  const draw = () => {
+    g.fillStyle = bg;
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = ink;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const chars = [...text];
+    g.shadowColor = ink;
+    g.shadowBlur = 5;
+    if (vertical) {
+      const size = Math.min(150, (c.height - 40) / chars.length);
+      g.font = `${size}px ${BRUSH_FONT}`;
+      chars.forEach((ch, i) => g.fillText(ch, c.width / 2, 30 + size * (i + 0.5)));
+    } else {
+      const size = Math.min(190, (c.width - 40) / chars.length);
+      g.font = `${size}px ${BRUSH_FONT}`;
+      chars.forEach((ch, i) => g.fillText(ch, c.width / 2 + (i - (chars.length - 1) / 2) * size, c.height / 2 + 6));
+    }
+    g.shadowBlur = 0;
+    t.needsUpdate = true;
+  };
+  draw();
+  whenBrush(draw);
   return t;
 }
 

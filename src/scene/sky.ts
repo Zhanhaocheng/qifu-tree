@@ -227,6 +227,8 @@ const DOME_FRAG = /* glsl */ `
       sky += vec3(0.28, 0.32, 0.55) * mw * 0.28 * uNight * smoothstep(0.0, 0.25, y);
     }
 
+    float sl = dot(sky, vec3(0.2126, 0.7152, 0.0722));
+    sky = mix(vec3(sl), sky, 1.0 + 0.7 * (1.0 - uNight));
     vec3 outc = sky;
     if (y > 0.0) {
       vec2 wind = vec2(uTime * 0.0065, uTime * 0.0032);
@@ -408,7 +410,7 @@ export class SkyRig {
     u.uTime.value = time;
     u.uCover.value = Math.min(0.9, params.cloudCover * 0.78 + 0.02);
     u.uNight.value = s.night;
-    u.uGain.value = 0.85 + day * 0.3;
+    u.uGain.value = 0.8 + day * 0.15;
     u.uHaze.value = 0.35 + params.fogTintAmount * 0.5;
     u.uTop.value.copy(s.top);
     u.uMid.value.copy(s.mid);
