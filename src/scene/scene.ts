@@ -255,7 +255,7 @@ export class QifuScene {
       if (item.id === 'gold') map = glyphAtlas('gold', '#e4b64c', '#7a1410');
       const mat = new THREE.MeshStandardMaterial({
         color: map ? '#ffffff' : item.color,
-        map,
+        ...(map ? { map } : {}),
         emissive: glow ? item.color : item.id === 'gold' ? '#7a5a10' : '#000000',
         emissiveIntensity: glow ? 1.2 : item.id === 'gold' ? 0.25 : 0,
         roughness: item.id === 'gold' ? 0.32 : 0.6,

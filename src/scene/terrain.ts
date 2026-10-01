@@ -237,18 +237,18 @@ const HAZE: Record<TerrainId, [number, number, number]> = {
 };
 
 const RIDGE_VERT = /* glsl */ `
-  attribute float aTop;
-  varying vec3 vWorld; varying float vH; varying float vTop;
+  attribute float aTop; attribute float aSlope;
+  varying vec3 vWorld; varying float vH; varying float vTop; varying float vSlope;
   void main() {
     vec4 w = modelMatrix * vec4(position, 1.0);
-    vWorld = w.xyz; vH = position.y; vTop = aTop;
+    vWorld = w.xyz; vH = position.y; vTop = aTop; vSlope = aSlope;
     gl_Position = projectionMatrix * viewMatrix * w;
   }
 `;
 const RIDGE_FRAG = /* glsl */ `
   uniform vec3 uColor; uniform vec3 uFog; uniform vec3 uLight; uniform vec3 uSunDir; uniform vec3 uSunColor;
   uniform vec3 uHazeTint; uniform float uSoft; uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
-  varying vec3 vWorld; varying float vH; varying float vTop;
+  varying vec3 vWorld; varying float vH; varying float vTop; varying float vSlope;
   ${NOISE_GLSL}
   float fbm4(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; } return s; }
   void main() {
@@ -262,7 +262,11 @@ const RIDGE_FRAG = /* glsl */ `
     float cun = vnoise(vec2(q.x * 26.0 + below * 0.05, q.y * 0.9));
     float tone = 0.62 + 0.55 * stroke + 0.35 * (cun - 0.5) * smoothstep(0.0, 14.0, below);
     float depthFade = smoothstep(0.0, 1.0, vH / max(uTop, 1.0));
-    vec3 lit = uLight * 0.52 + uSunColor * (0.18 + 0.85 * lightK);
+    vec2 tang = vec2(-radial.y, radial.x);
+    vec3 nrm = normalize(vec3(-radial.x - tang.x * vSlope * 1.5, 0.5, -radial.y - tang.y * vSlope * 1.5));
+    float facet = clamp(dot(nrm, normalize(uSunDir)) * 0.9 + 0.25, 0.0, 1.0);
+    float lk = mix(lightK, facet, 0.7);
+    vec3 lit = uLight * 0.4 + uSunColor * (0.08 + 1.1 * lk);
     vec3 col = uColor * tone * lit;
     col *= mix(1.0, 0.7, smoothstep(0.1, 0.9, wash) * (1.0 - depthFade * 0.5));
     float sn = smoothstep(uSnowLine - 3.0, uSnowLine + 7.0, vH + (stroke - 0.5) * 16.0) * step(0.5, uSnowLine);
@@ -274,7 +278,7 @@ const RIDGE_FRAG = /* glsl */ `
     float foot = 1.0 - smoothstep(-8.0, uTop * 0.42, vH);
     float drift = fbm4(vec2(theta * 3.0 + uTime * 0.012, vH * 0.045));
     float bands = smoothstep(0.35, 0.8, drift) * smoothstep(uTop * 0.85, uTop * 0.15, vH);
-    float mist = clamp(uMist + foot * 0.85 + bands * 0.4 + (1.0 - lightK) * 0.06, 0.0, 1.0);
+    float mist = clamp(uMist + foot * 0.55 + bands * 0.3 + (1.0 - lightK) * 0.04, 0.0, 1.0);
     vec3 haze = uFog * uHazeTint * 0.87;
     col = mix(col, haze, mist);
     gl_FragColor = vec4(col, smoothstep(0.0, uSoft, below + 0.15));
@@ -346,7 +350,7 @@ function expandRidges(src: Ridge[]): Ridge[] {
       freq: mixv(a.freq, b.freq) * (i % 2 ? 1.18 : 0.9),
       sharp: mixv(a.sharp, b.sharp),
       color: `#${c0.getHexString()}`,
-      mist: clamp(0.03 + 0.8 * Math.pow(i / (N - 1), 1.1) + (mixv(a.mist, b.mist) - 0.3) * 0.12, 0.02, 0.86),
+      mist: clamp(0.85 * Math.pow(i / (N - 1), 1.35) + (mixv(a.mist, b.mist) - 0.3) * 0.06, 0.0, 0.86),
       snowLine: snowLine !== undefined ? snowLine * 0.5 : undefined,
     });
   }
@@ -358,7 +362,9 @@ function ridgeGeometry(l: Ridge, seed: number): THREE.BufferGeometry {
   const rows = 6;
   const pos: number[] = [];
   const tops: number[] = [];
+  const slopes: number[] = [];
   const idx: number[] = [];
+  const topAt: number[] = [];
   for (let i = 0; i <= cols; i++) {
     const th = (i / cols) * Math.PI * 2;
     const cx = Math.cos(th);
@@ -367,11 +373,22 @@ function ridgeGeometry(l: Ridge, seed: number): THREE.BufferGeometry {
     const ridged = 1 - Math.abs(fbmWorld(cx * l.freq * 3 + 9, sz * l.freq * 3 + 9, 5, seed + 3) * 2 - 1);
     const crag = 1 - Math.abs(fbmWorld(cx * l.freq * 11 + 70, sz * l.freq * 11 + 70, 3, seed + 8) * 2 - 1);
     const shape = Math.pow(clamp(n * 0.55 + ridged * 0.62 + crag * 0.16 * Math.min(1.4, l.sharp), 0, 1.25), l.sharp);
-    const top = l.base + shape * l.amp;
+    topAt.push(l.base + shape * l.amp);
+  }
+  const arc = (Math.PI * 2 * l.radius) / cols;
+  for (let i = 0; i <= cols; i++) {
+    const th = (i / cols) * Math.PI * 2;
+    const cx = Math.cos(th);
+    const sz = Math.sin(th);
+    const top = topAt[i];
+    const prev = topAt[(i - 1 + cols) % cols];
+    const next = topAt[(i + 1) % cols];
+    const slope = clamp(((next - prev) / (2 * arc)) * 0.9, -1.6, 1.6);
     for (let j = 0; j <= rows; j++) {
       const y = lerp(-40, top, j / rows);
       pos.push(cx * l.radius, y, sz * l.radius);
       tops.push(top);
+      slopes.push(slope);
     }
   }
   for (let i = 0; i < cols; i++) {
@@ -384,6 +401,7 @@ function ridgeGeometry(l: Ridge, seed: number): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('aTop', new THREE.Float32BufferAttribute(tops, 1));
+  g.setAttribute('aSlope', new THREE.Float32BufferAttribute(slopes, 1));
   g.setIndex(idx);
   return g;
 }
@@ -445,13 +463,18 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
   const tb = surface(cfg.b, texSize);
   const groundMat = new THREE.MeshStandardMaterial({ map: ta.map, normalMap: ta.normalMap, vertexColors: true, roughness: cfg.a === 'snow' ? 0.55 : 0.95, normalScale: new THREE.Vector2(1.4, 1.4) });
   groundMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uNoise = { value: noiseTexture() };
+    shader.uniforms.uMacroDry = { value: new THREE.Color(LOOK[id].dry).multiplyScalar(1.5) };
+    shader.uniforms.uMacroLush = { value: new THREE.Color(0.7, 1.15, 0.62) };
+    shader.uniforms.uBloomAmt = { value: cfg.flowers.length ? 0.85 : 0 };
+    shader.uniforms.uBloom = { value: new THREE.Color(cfg.flowers[0] ?? '#ffffff') };
     shader.uniforms.mapB = { value: tb.map };
     shader.uniforms.normalMapB = { value: tb.normalMap };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aSplat; varying float vSplat;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;');
+      .replace('#include <common>', '#include <common>\nattribute float aSplat; varying float vSplat; varying vec2 vGW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat; vGW = position.xz;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vSplat; uniform sampler2D mapB; uniform sampler2D normalMapB;')
+      .replace('#include <common>', '#include <common>\nvarying float vSplat; varying vec2 vGW; uniform sampler2D mapB; uniform sampler2D normalMapB; uniform vec3 uMacroDry; uniform vec3 uMacroLush; uniform vec3 uBloom; uniform float uBloomAmt;\n' + NOISE_GLSL)
       .replace(
         '#include <map_fragment>',
         `vec4 dA = texture2D( map, vMapUv );
@@ -461,6 +484,14 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
          float sp = smoothstep(0.25, 0.75, vSplat);
          vec4 sampledDiffuseColor = mix(dA, dB, sp);
          sampledDiffuseColor.rgb *= (0.72 + 0.56 * dot(dA2.rgb, vec3(0.333))) * (0.78 + 0.5 * dot(dA3.rgb, vec3(0.333)));
+         float mA = vnoise(vGW * 0.03);
+         float mB = vnoise(vGW * 0.11 + 5.0);
+         float dryM = smoothstep(0.56, 0.8, mA) * (1.0 - sp);
+         float lushM = smoothstep(0.5, 0.2, mA) * (1.0 - sp);
+         sampledDiffuseColor.rgb *= mix(mix(vec3(1.0), uMacroLush, lushM), uMacroDry, dryM);
+         sampledDiffuseColor.rgb *= 0.82 + 0.36 * mB;
+         float bl = smoothstep(0.62, 0.8, vnoise(vGW * 0.07 + 20.0)) * step(0.82, vnoise(vGW * 5.5)) * (1.0 - sp);
+         sampledDiffuseColor.rgb = mix(sampledDiffuseColor.rgb, uBloom, bl * uBloomAmt);
          diffuseColor *= sampledDiffuseColor;`,
       )
       .replace(
@@ -488,7 +519,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
       transparent: true,
       uniforms: {
         uNoise: { value: noiseTexture() },
-        uColor: { value: new THREE.Color(l.color) },
+        uColor: { value: new THREE.Color(l.color).multiplyScalar(Math.min(1, 0.5 + i * 0.16)) },
         uFog: { value: new THREE.Color() },
         uLight: { value: new THREE.Color(1, 1, 1) },
         uSunDir: { value: new THREE.Vector3(0, 1, 0) },
