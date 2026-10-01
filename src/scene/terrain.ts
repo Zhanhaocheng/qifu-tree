@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { TerrainId } from '../../shared/game';
 import type { SkyParams } from './sky';
 import { fbmWorld, leafTexture, surface, waterNormal, type SurfaceKind } from './textures';
+import { NOISE_GLSL, noiseTexture } from './sky';
 import type { TreeStyle } from './tree';
 import { mulberry32 } from './tree';
 import { Kit, archBridge, bambooStalkGeometry, house, paifang, pavilion, pineGeometry, scatterRocks, stele, stoneLantern, terrace, wupengBoat, type Glow } from './props';
@@ -42,7 +43,7 @@ export interface TerrainWorld {
   onWater: { object: THREE.Object3D; base: THREE.Vector3; phase: number }[];
 }
 
-export const TERRACE_R = 6.8;
+export const TERRACE_R = 9.4;
 export const TERRACE_H = 0.55;
 
 const sm = THREE.MathUtils.smoothstep;
@@ -219,31 +220,66 @@ const CONFIGS: Record<TerrainId, TerrainConfig> = {
 };
 
 const RIDGE_VERT = /* glsl */ `
-  varying vec3 vWorld; varying float vH;
+  attribute float aTop;
+  varying vec3 vWorld; varying float vH; varying float vTop;
   void main() {
     vec4 w = modelMatrix * vec4(position, 1.0);
-    vWorld = w.xyz; vH = position.y;
+    vWorld = w.xyz; vH = position.y; vTop = aTop;
     gl_Position = projectionMatrix * viewMatrix * w;
   }
 `;
 const RIDGE_FRAG = /* glsl */ `
   uniform vec3 uColor; uniform vec3 uFog; uniform vec3 uLight; uniform vec3 uSunDir; uniform vec3 uSunColor;
-  uniform float uMist; uniform float uSnowLine; uniform float uTop;
-  varying vec3 vWorld; varying float vH;
-  float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+  uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
+  varying vec3 vWorld; varying float vH; varying float vTop;
+  ${NOISE_GLSL}
+  float fbm4(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; } return s; }
   void main() {
-    vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-    if (n.y < 0.0) n = -n;
-    float diff = clamp(dot(n, normalize(uSunDir)), 0.0, 1.0);
-    vec3 col = uColor * (uLight * 0.55 + uSunColor * diff * 0.75);
-    float sn = smoothstep(uSnowLine - 3.0, uSnowLine + 6.0, vH + (h21(floor(vWorld.xz * 0.5)) - 0.5) * 9.0) * step(0.5, uSnowLine);
-    sn *= smoothstep(0.35, 0.8, n.y);
-    col = mix(col, vec3(0.92, 0.95, 1.0) * (uLight * 0.7 + uSunColor * diff * 0.7), sn);
-    float foot = 1.0 - smoothstep(-6.0, uTop * 0.32, vH);
-    col *= mix(1.0, 0.72, smoothstep(0.25, 1.0, vH / uTop));
-    float mist = clamp(uMist + foot * 0.8, 0.0, 1.0);
+    vec2 radial = normalize(vWorld.xz + 1e-4);
+    float lightK = clamp(dot(-radial, normalize(uSunDir.xz + 1e-4)) * 0.5 + 0.5, 0.0, 1.0);
+    float theta = atan(vWorld.z, vWorld.x) * uRadius * 0.02;
+    float below = max(vTop - vH, 0.0);
+    vec2 q = vec2(theta + vH * 0.012, vH * 0.07);
+    float stroke = fbm4(vec2(q.x * 7.0, q.y * 1.6));
+    float wash = fbm4(vec2(theta * 1.7 + 3.0, vH * 0.03));
+    float cun = vnoise(vec2(q.x * 26.0 + below * 0.05, q.y * 0.9));
+    float tone = 0.62 + 0.55 * stroke + 0.35 * (cun - 0.5) * smoothstep(0.0, 14.0, below);
+    float depthFade = smoothstep(0.0, 1.0, vH / max(uTop, 1.0));
+    vec3 lit = uLight * 0.52 + uSunColor * (0.18 + 0.85 * lightK);
+    vec3 col = uColor * tone * lit;
+    col *= mix(1.0, 0.7, smoothstep(0.1, 0.9, wash) * (1.0 - depthFade * 0.5));
+    float sn = smoothstep(uSnowLine - 3.0, uSnowLine + 7.0, vH + (stroke - 0.5) * 16.0) * step(0.5, uSnowLine);
+    sn *= smoothstep(0.0, 6.0, below + 2.0);
+    col = mix(col, vec3(0.93, 0.96, 1.0) * (uLight * 0.62 + uSunColor * (0.25 + 0.7 * lightK)), sn * 0.9);
+    float rim = smoothstep(2.6, 0.0, below);
+    col = mix(col, col * 0.55, rim * uInk);
+    col += uSunColor * rim * pow(1.0 - lightK, 2.0) * 0.18 * (1.0 - uNight);
+    float foot = 1.0 - smoothstep(-8.0, uTop * 0.42, vH);
+    float drift = fbm4(vec2(theta * 3.0 + uTime * 0.012, vH * 0.045));
+    float bands = smoothstep(0.35, 0.8, drift) * smoothstep(uTop * 0.85, uTop * 0.15, vH);
+    float mist = clamp(uMist + foot * 0.85 + bands * 0.4 + (1.0 - lightK) * 0.06, 0.0, 1.0);
     col = mix(col, uFog, mist);
     gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+const MIST_FRAG = /* glsl */ `
+  uniform vec3 uFog; uniform vec3 uTint; uniform float uTime; uniform float uAlpha; uniform float uRadius; uniform float uH0; uniform float uHeight; uniform float uSeed;
+  varying vec3 vWorld; varying float vH; varying float vTop;
+  ${NOISE_GLSL}
+  float fbm4(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; } return s; }
+  void main() {
+    float theta = atan(vWorld.z, vWorld.x) * uRadius * 0.02;
+    float y = (vH - uH0) / uHeight;
+    float band = exp(-pow((y - 0.35) * 2.2, 2.0));
+    float n = fbm4(vec2(theta * 5.0 + uTime * 0.02 + uSeed, vH * 0.05 + uTime * 0.004));
+    float n2 = fbm4(vec2(theta * 13.0 - uTime * 0.03, vH * 0.12 + uSeed));
+    float a = band * smoothstep(0.25, 0.8, n * 0.8 + n2 * 0.35) * uAlpha;
+    gl_FragColor = vec4(mix(uFog, uTint, 0.35), a);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
   }
 `;
 
@@ -265,25 +301,59 @@ const CLOUDSEA_FRAG = /* glsl */ `
     float fade = 1.0 - smoothstep(uFade * 0.5, uFade, dist);
     col = mix(col, uFog, smoothstep(60.0, uFade, dist) * 0.55);
     gl_FragColor = vec4(col, dens * uAlpha * fade);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
   }
 `;
 
-function ridgeGeometry(l: TerrainConfig['ridges'][number], seed: number): THREE.BufferGeometry {
-  const cols = 320;
-  const rows = 4;
+type Ridge = TerrainConfig['ridges'][number];
+
+function expandRidges(src: Ridge[]): Ridge[] {
+  const N = 6;
+  const out: Ridge[] = [];
+  const c0 = new THREE.Color();
+  for (let i = 0; i < N; i++) {
+    const u = (i / (N - 1)) * (src.length - 1);
+    const j = Math.min(src.length - 2, Math.floor(u));
+    const t = u - j;
+    const a = src[j];
+    const b = src[j + 1];
+    const mixv = (x: number, y: number) => lerp(x, y, t);
+    c0.set(a.color).lerp(new THREE.Color(b.color), t);
+    const snowLine = a.snowLine !== undefined || b.snowLine !== undefined ? mixv(a.snowLine ?? b.snowLine!, b.snowLine ?? a.snowLine!) : undefined;
+    out.push({
+      radius: mixv(a.radius, b.radius) * (0.9 + i * 0.03),
+      base: mixv(a.base, b.base),
+      amp: mixv(a.amp, b.amp) * (1 + (i % 2 ? 0.1 : -0.08)),
+      freq: mixv(a.freq, b.freq) * (i % 2 ? 1.18 : 0.9),
+      sharp: mixv(a.sharp, b.sharp),
+      color: `#${c0.getHexString()}`,
+      mist: clamp(mixv(a.mist, b.mist) * 0.75 + i * 0.045, 0, 0.9),
+      snowLine,
+    });
+  }
+  return out;
+}
+
+function ridgeGeometry(l: Ridge, seed: number): THREE.BufferGeometry {
+  const cols = 720;
+  const rows = 6;
   const pos: number[] = [];
+  const tops: number[] = [];
   const idx: number[] = [];
   for (let i = 0; i <= cols; i++) {
     const th = (i / cols) * Math.PI * 2;
     const cx = Math.cos(th);
     const sz = Math.sin(th);
-    const n = fbmWorld(cx * l.freq * 2 + 40, sz * l.freq * 2 + 40, 4, seed);
-    const ridged = 1 - Math.abs(fbmWorld(cx * l.freq * 3 + 9, sz * l.freq * 3 + 9, 4, seed + 3) * 2 - 1);
-    const shape = Math.pow(clamp(n * 0.6 + ridged * 0.7, 0, 1.2), l.sharp);
+    const n = fbmWorld(cx * l.freq * 2 + 40, sz * l.freq * 2 + 40, 5, seed);
+    const ridged = 1 - Math.abs(fbmWorld(cx * l.freq * 3 + 9, sz * l.freq * 3 + 9, 5, seed + 3) * 2 - 1);
+    const crag = 1 - Math.abs(fbmWorld(cx * l.freq * 11 + 70, sz * l.freq * 11 + 70, 3, seed + 8) * 2 - 1);
+    const shape = Math.pow(clamp(n * 0.55 + ridged * 0.62 + crag * 0.16 * Math.min(1.4, l.sharp), 0, 1.25), l.sharp);
     const top = l.base + shape * l.amp;
     for (let j = 0; j <= rows; j++) {
       const y = lerp(-40, top, j / rows);
       pos.push(cx * l.radius, y, sz * l.radius);
+      tops.push(top);
     }
   }
   for (let i = 0; i < cols; i++) {
@@ -295,7 +365,16 @@ function ridgeGeometry(l: TerrainConfig['ridges'][number], seed: number): THREE.
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aTop', new THREE.Float32BufferAttribute(tops, 1));
   g.setIndex(idx);
+  return g;
+}
+
+function mistGeometry(radius: number, h0: number, height: number): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(radius, radius, height, 160, 4, true);
+  g.translate(0, h0 + height / 2, 0);
+  const n = g.attributes.position.count;
+  g.setAttribute('aTop', new THREE.Float32BufferAttribute(new Float32Array(n), 1));
   return g;
 }
 
@@ -390,11 +469,15 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
 
   // ------------------------------------------------ distant ridges (ink wash layers)
   const ridgeMats: THREE.ShaderMaterial[] = [];
-  cfg.ridges.forEach((l, i) => {
+  const mistMats: THREE.ShaderMaterial[] = [];
+  const layers = expandRidges(cfg.ridges);
+  const inkStrength = id === 'bamboo' || id === 'jiangnan' ? 0.9 : id === 'desert' ? 0.35 : 0.6;
+  layers.forEach((l, i) => {
     const mat = new THREE.ShaderMaterial({
       side: THREE.DoubleSide,
       fog: false,
       uniforms: {
+        uNoise: { value: noiseTexture() },
         uColor: { value: new THREE.Color(l.color) },
         uFog: { value: new THREE.Color() },
         uLight: { value: new THREE.Color(1, 1, 1) },
@@ -403,6 +486,10 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
         uMist: { value: l.mist },
         uSnowLine: { value: l.snowLine ?? 0 },
         uTop: { value: l.base + l.amp },
+        uRadius: { value: l.radius },
+        uTime: { value: 0 },
+        uNight: { value: 0 },
+        uInk: { value: inkStrength },
       },
       vertexShader: RIDGE_VERT,
       fragmentShader: RIDGE_FRAG,
@@ -410,9 +497,39 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
     ridgeMats.push(mat);
     const m = new THREE.Mesh(ridgeGeometry(l, userSeed + i * 13 + id.length), mat);
     m.frustumCulled = false;
-    m.renderOrder = -5 + i;
+    m.renderOrder = -10 + i;
     group.add(m);
     disposables.push(m.geometry, mat);
+
+    if (quality !== 'low' && i < layers.length - 1) {
+      const h0 = l.base * 0.3;
+      const mh = (l.base + l.amp) * 0.5 + 8;
+      const mm = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        fog: false,
+        side: THREE.DoubleSide,
+        uniforms: {
+          uNoise: { value: noiseTexture() },
+          uFog: { value: new THREE.Color() },
+          uTint: { value: new THREE.Color('#ffffff') },
+          uTime: { value: 0 },
+          uAlpha: { value: 0.5 + i * 0.05 },
+          uRadius: { value: l.radius },
+          uH0: { value: h0 },
+          uHeight: { value: mh },
+          uSeed: { value: i * 7.3 },
+        },
+        vertexShader: RIDGE_VERT,
+        fragmentShader: MIST_FRAG,
+      });
+      mistMats.push(mm);
+      const mist = new THREE.Mesh(mistGeometry(l.radius - 3 - i * 0.5, h0, mh), mm);
+      mist.frustumCulled = false;
+      mist.renderOrder = -2 + i * 0.1;
+      group.add(mist);
+      disposables.push(mist.geometry, mm);
+    }
   });
 
   // ------------------------------------------------ cloud sea (mountain)
@@ -652,7 +769,14 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
       rm.uniforms.uFog.value.copy(env.fogColor);
       rm.uniforms.uLight.value.copy(env.light);
       rm.uniforms.uSunDir.value.copy(env.sunDir);
-      rm.uniforms.uSunColor.value.copy(env.sunColor).multiplyScalar(1 - env.night);
+      rm.uniforms.uSunColor.value.copy(env.sunColor).multiplyScalar(1 - env.night * 0.85);
+      rm.uniforms.uTime.value = env.time;
+      rm.uniforms.uNight.value = env.night;
+    }
+    for (const mm of mistMats) {
+      mm.uniforms.uFog.value.copy(env.fogColor);
+      mm.uniforms.uTint.value.copy(env.light).multiplyScalar(0.8 + 0.3 * (1 - env.night));
+      mm.uniforms.uTime.value = env.time;
     }
     for (const cm of cloudMats) {
       cm.uniforms.uTime.value = env.time;

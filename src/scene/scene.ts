@@ -8,9 +8,12 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ITEMS, type ItemId, type PrayerTag, type TerrainId } from '../../shared/game';
 import { applyHeightFog } from './fogPatch';
+import { Fx3D } from './fx3d';
 import { Fauna, Particles, type AnimalSound } from './fauna';
 import { Kit } from './props';
 import { SkyRig, glowTexture } from './sky';
+import { createGodRayPass, createGradePass } from './post';
+import type { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { TERRACE_H, TERRACE_R, build as buildTerrain, type TerrainWorld } from './terrain';
 import { glyphAtlas, leafTexture, surface } from './textures';
 import { STAGE_PARAMS, buildTree, mulberry32, type Anchor, type BuiltTree } from './tree';
@@ -39,6 +42,7 @@ export interface SceneEvents {
   onFrame?: (state: { wind: number; night: number; hour: number; terrain: TerrainId }) => void;
   onQuality?: (q: Quality) => void;
   onAnimal?: (kind: AnimalSound, pos: THREE.Vector3, camPos: THREE.Vector3) => void;
+  onIntro?: (active: boolean) => void;
 }
 
 type Uniforms = Record<string, { value: unknown }>;
@@ -104,6 +108,8 @@ export class QifuScene {
 
   private composer: EffectComposer | null = null;
   private bloom: UnrealBloomPass | null = null;
+  private godRays: ShaderPass | null = null;
+  private grade: ShaderPass | null = null;
   private clock = new THREE.Clock();
   private time = 0;
   private uniforms = { uTime: { value: 0 }, uWind: { value: 0 }, uGrow: { value: 1 } };
@@ -155,6 +161,8 @@ export class QifuScene {
   private tagsLoaded = false;
   private recent24h = 0;
 
+  private fx: Fx3D;
+  private crownR = 8;
   private sparks: THREE.Points;
   private sparkVel = new Float32Array(MAX_SPARKS * 3);
   private sparkLife = new Float32Array(MAX_SPARKS);
@@ -171,6 +179,9 @@ export class QifuScene {
   private restoreView: { target: THREE.Vector3; pos: THREE.Vector3 } | null = null;
   private cameraTween: { t0: number; dur: number; fromDist: number; toDist: number; fromTargetY: number; toTargetY: number } | null = null;
   private lockQuality: boolean;
+  private isolated = false;
+  private intro: { t0: number; dur: number } | null = null;
+  private introPending = false;
 
   private fpsFrames = 0;
   private fpsTime = 0;
@@ -181,9 +192,13 @@ export class QifuScene {
   private glowTex = glowTexture();
   private tmpV = new THREE.Vector3();
   private tmpC = new THREE.Color();
+  private tmpC2 = new THREE.Color();
+  private tmpV2 = new THREE.Vector3();
   private lightTint = new THREE.Color();
 
-  constructor(private canvas: HTMLCanvasElement, private events: SceneEvents = {}, opts: { quality?: Quality; hour?: number | null; terrain?: TerrainId; seed?: number } = {}) {
+  constructor(private canvas: HTMLCanvasElement, private events: SceneEvents = {}, opts: { quality?: Quality; hour?: number | null; terrain?: TerrainId; seed?: number; intro?: boolean } = {}) {
+    this.introPending = opts.intro ?? new URLSearchParams(location.search).get('intro') !== '0';
+    if (this.introPending) this.armIntro();
     const coarse = matchMedia('(pointer: coarse)').matches || innerWidth < 720;
     this.quality = opts.quality ?? (coarse ? 'medium' : 'high');
     this.lockQuality = !!opts.quality;
@@ -270,6 +285,16 @@ export class QifuScene {
 
     this.sparks = this.makeSparks();
     this.scene.add(this.sparks);
+    this.fx = new Fx3D({
+      camera: this.camera,
+      center: () => new THREE.Vector3(0, TERRACE_H, 0),
+      treeTop: () => new THREE.Vector3(0, TERRACE_H + this.treeHeight * 0.6, 0),
+      crownRadius: () => this.crownR,
+      tagPos: (id) => this.tagWorldPosition(id),
+      groundY: (x, z) => (Math.hypot(x, z) < TERRACE_R - 0.6 ? TERRACE_H + 0.1 : this.world ? this.world.heightAt(x, z) : 0),
+      quality: () => this.quality,
+    });
+    this.scene.add(this.fx.group);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -411,7 +436,7 @@ export class QifuScene {
     const dpr = Math.min(devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.5 : 1);
     this.renderer.setPixelRatio(dpr);
     this.sky.setPixelRatio(dpr);
-    this.sky.setCloudQuality(q === 'high' ? 5 : q === 'medium' ? 4 : 3);
+    this.sky.setQuality(q);
     this.renderer.shadowMap.enabled = q !== 'low';
     this.key.castShadow = q !== 'low';
     const size = q === 'high' ? 4096 : 2048;
@@ -427,13 +452,19 @@ export class QifuScene {
     this.composer?.dispose();
     this.composer = null;
     this.bloom = null;
+    this.godRays = null;
+    this.grade = null;
     if (q !== 'low') {
       const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: q === 'high' ? 4 : 2 });
       this.composer = new EffectComposer(this.renderer, rt);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.godRays = createGodRayPass(q === 'high' ? 44 : 24);
+      this.composer.addPass(this.godRays);
       this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.7, 1.5);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
+      this.grade = createGradePass();
+      this.composer.addPass(this.grade);
       if (q === 'high') this.composer.addPass(new SMAAPass());
     }
     this.resize();
@@ -487,23 +518,152 @@ export class QifuScene {
     const p = STAGE_PARAMS[stage];
     this.controls.minDistance = 3.5;
     this.controls.maxDistance = p.cameraDistance * 2.6;
-    const targetY = TERRACE_H + this.treeHeight * 0.42;
+    const targetY = TERRACE_H + this.treeHeight * 0.44;
     if (first) {
-      this.controls.target.set(0, targetY, 0);
-      const narrow = this.camera.aspect < 0.8;
-      const dir = new THREE.Vector3(0.28, 0.22, 1).normalize();
-      this.camera.position.copy(this.controls.target).addScaledVector(dir, p.cameraDistance * (narrow ? 1.25 : 1));
+      const v = this.viewFor(stage);
+      this.controls.target.copy(v.target);
+      this.camera.position.copy(v.pos);
       this.controls.update();
-    } else {
+    } else if (!this.intro && !this.introPending) {
       this.cameraTween = {
         t0: this.time,
         dur: 3,
         fromDist: this.camera.position.distanceTo(this.controls.target),
-        toDist: p.cameraDistance,
+        toDist: p.cameraDistance * (this.camera.aspect < 0.8 ? 1.5 : 1),
         fromTargetY: this.controls.target.y,
         toTargetY: targetY,
       };
+    } else {
+      const v = this.viewFor(stage);
+      this.controls.target.copy(v.target);
     }
+  }
+
+  private viewFor(stage: number) {
+    const p = STAGE_PARAMS[stage];
+    const narrow = this.camera.aspect < 0.8;
+    const target = new THREE.Vector3(0, TERRACE_H + this.treeHeight * 0.44, 0);
+    const dir = new THREE.Vector3(0.28, 0.13, 1).normalize();
+    const pos = target.clone().addScaledVector(dir, p.cameraDistance * (narrow ? 1.5 : 1));
+    return { target, pos };
+  }
+
+  /** 电影式开场：从高空远景缓缓俯冲、环绕飞向古树 */
+  playIntro(duration = 11) {
+    if (!this.introPending) return;
+    this.introPending = false;
+    this.intro = { t0: this.time, dur: duration };
+    this.controls.enabled = false;
+    this.cameraTween = null;
+    this.focus = null;
+    this.events.onIntro?.(true);
+  }
+
+  private armIntro() {
+    const style = document.createElement('style');
+    style.textContent = `
+      #app.intro #hud, #app.intro #popup { opacity: 0; pointer-events: none; }
+      #hud, #popup { transition: opacity 1.4s ease 0.2s; }
+      .intro-bars { position: fixed; left: 0; right: 0; height: 9vh; background: #000; z-index: 60; pointer-events: none; transition: transform 1.6s cubic-bezier(.2,.7,.2,1); }
+      .intro-bars.top { top: 0; transform: translateY(0); } .intro-bars.bot { bottom: 0; transform: translateY(0); }
+      .intro-bars.top.off { transform: translateY(-100%); } .intro-bars.bot.off { transform: translateY(100%); }`;
+    document.head.appendChild(style);
+    const bars = ['top', 'bot'].map((c) => {
+      const b = document.createElement('div');
+      b.className = `intro-bars ${c}`;
+      document.body.appendChild(b);
+      return b;
+    });
+    const app = document.querySelector('#app');
+    app?.classList.add('intro');
+    this.events.onIntro = ((prev) => (active: boolean) => {
+      prev?.(active);
+      if (active) return;
+      app?.classList.remove('intro');
+      bars.forEach((b) => {
+        b.classList.add('off');
+        setTimeout(() => b.remove(), 1800);
+      });
+    })(this.events.onIntro);
+    const start = () => this.playIntro();
+    const loading = document.querySelector('#loading');
+    if (loading) {
+      const mo = new MutationObserver(() => {
+        if (loading.classList.contains('hide') || !loading.isConnected) {
+          mo.disconnect();
+          setTimeout(start, 250);
+        }
+      });
+      mo.observe(loading, { attributes: true });
+      mo.observe(document.querySelector('#app')!, { childList: true });
+    }
+    setTimeout(start, 25000);
+  }
+
+  isIntroActive() {
+    return this.intro !== null || this.introPending;
+  }
+
+  endIntro() {
+    const wasPending = this.introPending;
+    this.introPending = false;
+    if (!this.intro) {
+      if (wasPending) this.events.onIntro?.(false);
+      return;
+    }
+    this.intro = null;
+    const v = this.viewFor(this.stage);
+    this.controls.target.copy(v.target);
+    this.camera.position.copy(v.pos);
+    this.camera.fov = this.baseFov();
+    this.camera.updateProjectionMatrix();
+    this.controls.enabled = true;
+    this.controls.update();
+    this.lastInteraction = this.time;
+    this.events.onIntro?.(false);
+  }
+
+  private baseFov() {
+    return this.camera.aspect < 0.8 ? 55 : 42;
+  }
+
+  private introPose(k: number) {
+    const v = this.viewFor(this.stage);
+    const e = k * k * k * (k * (k * 6 - 15) + 10);
+    const rel = v.pos.clone().sub(v.target);
+    const dist = rel.length();
+    const az0 = Math.atan2(rel.x, rel.z);
+    const el0 = Math.asin(rel.y / dist);
+    const inv = 1 - e;
+    const az = az0 + 1.5 * Math.pow(inv, 1.35);
+    const el = THREE.MathUtils.lerp(el0, 0.5, Math.pow(inv, 1.6));
+    const d = dist * (1 + 1.6 * Math.pow(inv, 1.25));
+    const lookY = v.target.y + this.treeHeight * 0.7 * Math.pow(inv, 1.4);
+    const target = new THREE.Vector3(0, lookY, 0);
+    const pos = new THREE.Vector3(Math.sin(az) * Math.cos(el) * d, Math.sin(el) * d + v.target.y, Math.cos(az) * Math.cos(el) * d);
+    return { target, pos, fov: this.baseFov() + 9 * Math.pow(inv, 1.5) };
+  }
+
+  /** 调试：仅显示树本体（白底），用于检查轮廓 */
+  isolateTree() {
+    this.scene.children.forEach((c) => {
+      if (c !== this.treeGroup && c.type === 'Group') c.visible = false;
+    });
+    this.scene.background = new THREE.Color('#ffffff');
+    this.isolated = true;
+  }
+
+  /** 跳过所有过渡动画（截图 / 调试用） */
+  settle() {
+    this.endIntro();
+    this.cameraTween = null;
+    this.focus = null;
+    this.growStart = -100;
+    this.time += 40;
+    const v = this.viewFor(this.stage);
+    this.controls.target.copy(v.target);
+    this.camera.position.copy(v.pos);
+    this.controls.update();
   }
 
   private rebuildTree(animate: boolean, prevHeight = this.treeHeight) {
@@ -539,6 +699,7 @@ export class QifuScene {
     this.anchors = built.anchors;
     this.decorAnchors = built.decor;
     this.treeHeight = built.height;
+    this.crownR = built.crownRadius;
     this.buildRope(built);
     if (animate) {
       this.growStart = this.time;
@@ -672,7 +833,12 @@ export class QifuScene {
 
   private bindPicking() {
     let down: { x: number; y: number; t: number } | null = null;
-    this.canvas.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY, t: performance.now() }));
+    const skip = () => this.intro && this.endIntro();
+    this.canvas.addEventListener('wheel', skip, { passive: true });
+    this.canvas.addEventListener('pointerdown', (e) => {
+      skip();
+      down = { x: e.clientX, y: e.clientY, t: performance.now() };
+    });
     this.canvas.addEventListener('pointerup', (e) => {
       if (!down) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
@@ -721,7 +887,7 @@ export class QifuScene {
     const s = this.sky.state;
     const fogMat = this.scene.fog as THREE.FogExp2;
     fogMat.color.copy(fog);
-    fogMat.density = world.fogDensity * (1 + s.night * 0.25);
+    fogMat.density = this.isolated ? 0 : world.fogDensity * (1 + s.night * 0.25);
 
     const dayW = 1 - s.night;
     this.key.position.copy(s.moonDir).lerp(s.sunDir, dayW).normalize().multiplyScalar(110).add(this.key.target.position);
@@ -747,9 +913,29 @@ export class QifuScene {
     for (const g of this.kit.glows) g.material.emissiveIntensity = THREE.MathUtils.lerp(g.day, g.night, Math.pow(s.night, 0.8));
 
     if (this.bloom) {
-      this.bloom.strength = 0.18 + s.night * (0.2 + activity * 0.2);
-      this.bloom.radius = 0.65;
-      this.bloom.threshold = THREE.MathUtils.lerp(2.4, 1.05, s.night);
+      this.bloom.strength = 0.26 + s.night * (0.22 + activity * 0.22);
+      this.bloom.radius = 0.72;
+      this.bloom.threshold = THREE.MathUtils.lerp(1.6, 0.95, s.night);
+    }
+    if (this.godRays) {
+      const night = s.night > 0.5;
+      const dirW = night ? s.moonDir : s.sunDir;
+      const facing = dirW.dot(this.camera.getWorldDirection(this.tmpV2));
+      this.tmpV.copy(dirW).multiplyScalar(1000).add(this.camera.position).project(this.camera);
+      const u = this.godRays.uniforms;
+      (u.uSun.value as THREE.Vector2).set(this.tmpV.x * 0.5 + 0.5, this.tmpV.y * 0.5 + 0.5);
+      const up = THREE.MathUtils.smoothstep(dirW.y, -0.04, 0.16);
+      const warm = 1 - THREE.MathUtils.smoothstep(s.sunDir.y, 0.1, 0.6);
+      u.uIntensity.value = up * THREE.MathUtils.smoothstep(facing, -0.25, 0.4) * (night ? 0.22 : 0.42 + warm * 0.5);
+      u.uThreshold.value = night ? 1.1 : 1.8;
+      u.uAspect.value = this.camera.aspect;
+      (u.uTint.value as THREE.Color).copy(night ? this.tmpC.set('#9db8ff') : s.sunColor).lerp(this.tmpC2.set('#ffffff'), night ? 0.1 : 0.2);
+    }
+    if (this.grade) {
+      const u = this.grade.uniforms;
+      u.uTime.value = this.time % 100;
+      u.uNight.value = s.night;
+      (u.uWarm.value as THREE.Color).setRGB(1, 1, 1).lerp(this.tmpC2.set('#ffe6c8'), (1 - s.night) * 0.12 * (1 - THREE.MathUtils.smoothstep(s.sunDir.y, 0.2, 0.7)));
     }
 
     world.update(dt, {
@@ -840,6 +1026,25 @@ export class QifuScene {
   }
 
   private updateCamera(dt: number) {
+    if (this.introPending && !this.intro) {
+      const pose = this.introPose(0);
+      this.camera.position.copy(pose.pos);
+      this.camera.lookAt(pose.target);
+      this.camera.fov = pose.fov;
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    if (this.intro) {
+      const k = Math.min(1, (this.time - this.intro.t0) / this.intro.dur);
+      const pose = this.introPose(k);
+      this.camera.position.copy(pose.pos);
+      this.camera.lookAt(pose.target);
+      this.camera.fov = pose.fov;
+      this.camera.updateProjectionMatrix();
+      this.controls.target.copy(pose.target);
+      if (k >= 1) this.endIntro();
+      return;
+    }
     if (this.focus) {
       const f = this.focus;
       const k = Math.min(1, (this.time - f.t0) / 1.4);
@@ -888,6 +1093,7 @@ export class QifuScene {
     this.updateEnvironment(dt);
     this.updateTags();
     this.updateSparks(dt);
+    this.fx.update(dt, this.wind, this.time);
 
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
