@@ -247,7 +247,7 @@ const RIDGE_VERT = /* glsl */ `
 `;
 const RIDGE_FRAG = /* glsl */ `
   uniform vec3 uColor; uniform vec3 uFog; uniform vec3 uLight; uniform vec3 uSunDir; uniform vec3 uSunColor;
-  uniform vec3 uHazeTint; uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
+  uniform vec3 uHazeTint; uniform float uSoft; uniform float uMist; uniform float uSnowLine; uniform float uTop; uniform float uRadius; uniform float uTime; uniform float uNight; uniform float uInk;
   varying vec3 vWorld; varying float vH; varying float vTop;
   ${NOISE_GLSL}
   float fbm4(vec2 p) { float s = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 11.7; a *= 0.5; } return s; }
@@ -277,7 +277,7 @@ const RIDGE_FRAG = /* glsl */ `
     float mist = clamp(uMist + foot * 0.85 + bands * 0.4 + (1.0 - lightK) * 0.06, 0.0, 1.0);
     vec3 haze = uFog * uHazeTint;
     col = mix(col, haze, mist);
-    gl_FragColor = vec4(col, 1.0);
+    gl_FragColor = vec4(col, smoothstep(0.0, uSoft, below + 0.15));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -485,6 +485,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
     const mat = new THREE.ShaderMaterial({
       side: THREE.DoubleSide,
       fog: false,
+      transparent: true,
       uniforms: {
         uNoise: { value: noiseTexture() },
         uColor: { value: new THREE.Color(l.color) },
@@ -500,6 +501,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
         uNight: { value: 0 },
         uInk: { value: inkStrength },
         uHazeTint: { value: new THREE.Vector3(...HAZE[id]) },
+        uSoft: { value: 1.2 + i * 1.5 },
       },
       vertexShader: RIDGE_VERT,
       fragmentShader: RIDGE_FRAG,
@@ -507,7 +509,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
     ridgeMats.push(mat);
     const m = new THREE.Mesh(ridgeGeometry(l, userSeed + i * 13 + id.length), mat);
     m.frustumCulled = false;
-    m.renderOrder = -10 + i;
+    m.renderOrder = -10 + (layers.length - 1 - i);
     group.add(m);
     disposables.push(m.geometry, mat);
 

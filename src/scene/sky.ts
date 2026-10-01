@@ -14,7 +14,7 @@ interface Key {
   hemiI: number;
 }
 
-const NIGHT = { top: '#040716', mid: '#0a1330', horizon: '#142349', sun: '#8aa4ff', sunI: 0.0, hemiSky: '#2f4590', hemiGround: '#10131f', hemiI: 0.6 };
+const NIGHT = { top: '#040716', mid: '#0a1330', horizon: '#142349', sun: '#8aa4ff', sunI: 0.0, hemiSky: '#4560b0', hemiGround: '#1a2236', hemiI: 0.62 };
 
 const KEYS: Key[] = [
   { h: 0, ...NIGHT },
@@ -24,7 +24,7 @@ const KEYS: Key[] = [
   { h: 9, top: '#1f66cc', mid: '#5ea0e6', horizon: '#c4e2f7', sun: '#fff3d6', sunI: 3.0, hemiSky: '#a9d2f5', hemiGround: '#66774a', hemiI: 0.95 },
   { h: 14.5, top: '#1f66cc', mid: '#5ea0e6', horizon: '#c4e2f7', sun: '#fff3d6', sunI: 3.0, hemiSky: '#a9d2f5', hemiGround: '#66774a', hemiI: 0.95 },
   { h: 16.8, top: '#2b66c0', mid: '#7fa8d8', horizon: '#f8dcae', sun: '#ffd19a', sunI: 2.3, hemiSky: '#a6c3e6', hemiGround: '#5f6a42', hemiI: 0.8 },
-  { h: 18.1, top: '#26306e', mid: '#9a5a8a', horizon: '#ff7a48', sun: '#ff8f55', sunI: 1.2, hemiSky: '#8a7aa8', hemiGround: '#3b2c2c', hemiI: 0.6 },
+  { h: 18.1, top: '#26306e', mid: '#9a5a8a', horizon: '#ff7a48', sun: '#ff8f55', sunI: 1.6, hemiSky: '#9a86b0', hemiGround: '#4a3636', hemiI: 0.85 },
   { h: 19.3, top: '#10163c', mid: '#3a2f6a', horizon: '#8a4a78', sun: '#8aa4ff', sunI: 0.0, hemiSky: '#38477f', hemiGround: '#1a1a26', hemiI: 0.58 },
   { h: 21, ...NIGHT },
   { h: 24, ...NIGHT },
@@ -70,8 +70,13 @@ export function sampleSky(hour: number, out: SkyState): SkyState {
   out.hemiIntensity = THREE.MathUtils.lerp(a.hemiI, b.hemiI, t);
 
   const ang = (Math.PI * (h - 6)) / 12;
-  out.sunDir.set(-Math.cos(ang) * 0.9, Math.sin(ang), -0.28).normalize();
-  out.moonDir.set(Math.cos(ang) * 0.7, -Math.sin(ang), -0.35).normalize();
+  const place = (v: THREE.Vector3, hx: number, y: number, hz: number) => {
+    const hl = Math.hypot(hx, hz);
+    const k = Math.sqrt(Math.max(0, 1 - y * y)) / hl;
+    v.set(hx * k, y, hz * k);
+  };
+  place(out.sunDir, Math.cos(ang) * 0.5, Math.sin(ang), -0.8);
+  place(out.moonDir, Math.cos(ang - 0.35) * 0.45, -Math.sin(ang - 0.35), -0.75);
   out.night = 1 - THREE.MathUtils.smoothstep(out.sunDir.y, -0.22, 0.03);
   out.hour = h;
   return out;
@@ -228,7 +233,7 @@ const DOME_FRAG = /* glsl */ `
     }
 
     float sl = dot(sky, vec3(0.2126, 0.7152, 0.0722));
-    sky = mix(vec3(sl), sky, 1.0 + 0.7 * (1.0 - uNight));
+    sky = mix(vec3(sl), sky, (1.12 + 0.55 * smoothstep(0.05, 0.5, uSunDir.y)) * (1.0 - 0.3 * uNight) + 0.3 * uNight);
     vec3 outc = sky;
     if (y > 0.0) {
       vec2 wind = vec2(uTime * 0.0065, uTime * 0.0032);
@@ -410,7 +415,7 @@ export class SkyRig {
     u.uTime.value = time;
     u.uCover.value = Math.min(0.9, params.cloudCover * 0.78 + 0.02);
     u.uNight.value = s.night;
-    u.uGain.value = 0.8 + day * 0.15;
+    u.uGain.value = 0.62 + day * 0.33;
     u.uHaze.value = 0.35 + params.fogTintAmount * 0.5;
     u.uTop.value.copy(s.top);
     u.uMid.value.copy(s.mid);

@@ -47,6 +47,8 @@ interface Creature {
   timer: number;
   target: THREE.Vector3;
   heading: number;
+  minR?: number;
+  maxR?: number;
   phase: number;
   nextCall: number;
   path?: { radius: number; angle: number; dir: number };
@@ -306,7 +308,11 @@ export class Fauna {
   private prevPos = new Map<number, THREE.Vector3>();
   private birdCall = 8;
 
-  constructor(private world: TerrainWorld, private id: TerrainId, quality: QualityLevel, seed: number) {
+  private viewDist = 40;
+  private vs = 1;
+
+  constructor(private world: TerrainWorld, private id: TerrainId, quality: QualityLevel, seed: number, viewDist = 40) {
+    this.setView(viewDist);
     this.rng = mulberry32(seed * 131 + 7);
     const q = quality === 'high' ? 1 : quality === 'medium' ? 0.7 : 0.4;
     this.spawnCreatures();
@@ -315,10 +321,29 @@ export class Fauna {
     this.spawnFireflies(q);
   }
 
+  private setView(d: number) {
+    this.viewDist = d;
+    this.vs = THREE.MathUtils.clamp(d / 40, 0.8, 1.9);
+  }
+
+  /** 生长阶段变化后镜头距离不同，把动物重新摆到镜头前方 */
+  relayout(viewDist: number) {
+    if (Math.abs(viewDist - this.viewDist) < 1) return;
+    this.setView(viewDist);
+    for (const c of this.creatures) {
+      if (c.path || c.minR === undefined) continue;
+      const p = this.pickGround(c.minR, c.maxR!, true);
+      c.group.position.copy(p);
+      c.target.copy(p);
+      c.state = 'idle';
+    }
+  }
+
   private pickGround(minR: number, maxR: number, view = false): THREE.Vector3 {
+    const half = this.viewDist < 20 ? Math.PI : 1.9;
     for (let i = 0; i < 60; i++) {
-      const a = view ? Math.PI / 2 + (this.rng() - 0.5) * 3.8 : this.rng() * Math.PI * 2;
-      const r = minR + this.rng() * (maxR - minR);
+      const a = view ? Math.PI / 2 + (this.rng() - 0.5) * 2 * half : this.rng() * Math.PI * 2;
+      const r = view ? Math.min(62, (minR + this.rng() * (maxR - minR)) * this.vs) : minR + this.rng() * (maxR - minR);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       const h = this.world.heightAt(x, z);
@@ -330,6 +355,8 @@ export class Fauna {
   }
 
   private add(c: Creature, minR = 12, maxR = 34) {
+    c.minR = minR;
+    c.maxR = maxR;
     const p = this.pickGround(minR, maxR, true);
     c.group.position.copy(p);
     c.group.scale.setScalar(c.scale);
@@ -626,9 +653,9 @@ export class Fauna {
       const im = this.birds;
       this.birdData.forEach((b, i) => {
         b.angle += b.speed * dt * (1 + env.wind * 0.6);
-        const x = Math.cos(b.angle) * b.radius;
-        const z = Math.sin(b.angle) * b.radius;
-        const y = b.height + Math.sin(env.time * 0.4 + b.bob) * 2;
+        const x = Math.cos(b.angle) * b.radius * this.vs;
+        const z = Math.sin(b.angle) * b.radius * this.vs;
+        const y = b.height * (0.8 + this.vs * 0.2) + Math.sin(env.time * 0.4 + b.bob) * 2;
         d.position.set(x, y, z);
         d.rotation.set(0, -b.angle + (b.speed > 0 ? Math.PI : 0) + Math.PI / 2 * (b.speed > 0 ? 1 : -1) + Math.PI, Math.sin(env.time * 0.5 + b.bob) * 0.25);
         d.scale.setScalar(this.id === 'desert' ? 5.6 : 4.6);

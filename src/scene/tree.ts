@@ -19,10 +19,10 @@ export interface StageParams {
 }
 
 export const STAGE_PARAMS: StageParams[] = [
-  { height: 4.8, splitHeight: 1.8, trunkRadius: 0.46, limbs: 4, limbLength: 2.7, levels: 2, roots: 5, leaves: 800, leafSize: 1.0, tagScale: 0.8, cameraDistance: 12.5, tagCapacity: 12, decor: 3 },
-  { height: 10, splitHeight: 3.8, trunkRadius: 1.0, limbs: 4, limbLength: 5.2, levels: 3, roots: 7, leaves: 3200, leafSize: 1.35, tagScale: 1.1, cameraDistance: 21, tagCapacity: 40, decor: 8 },
-  { height: 16, splitHeight: 5.8, trunkRadius: 1.75, limbs: 5, limbLength: 7.4, levels: 3, roots: 9, leaves: 8500, leafSize: 1.7, tagScale: 1.6, cameraDistance: 40, tagCapacity: 120, decor: 20 },
-  { height: 23, splitHeight: 8.2, trunkRadius: 2.8, limbs: 6, limbLength: 11, levels: 4, roots: 12, leaves: 17000, leafSize: 2.2, tagScale: 2.1, cameraDistance: 70, tagCapacity: 300, decor: 40 },
+  { height: 4.8, splitHeight: 1.8, trunkRadius: 0.46, limbs: 4, limbLength: 2.7, levels: 2, roots: 5, leaves: 800, leafSize: 1.0, tagScale: 0.8, cameraDistance: 11.5, tagCapacity: 12, decor: 3 },
+  { height: 10, splitHeight: 3.8, trunkRadius: 1.0, limbs: 4, limbLength: 5.2, levels: 3, roots: 7, leaves: 3200, leafSize: 1.35, tagScale: 1.1, cameraDistance: 19, tagCapacity: 40, decor: 8 },
+  { height: 16, splitHeight: 5.8, trunkRadius: 1.75, limbs: 5, limbLength: 7.4, levels: 3, roots: 9, leaves: 8500, leafSize: 1.7, tagScale: 1.6, cameraDistance: 31, tagCapacity: 120, decor: 20 },
+  { height: 23, splitHeight: 8.2, trunkRadius: 2.8, limbs: 6, limbLength: 11, levels: 4, roots: 12, leaves: 17000, leafSize: 2.2, tagScale: 2.1, cameraDistance: 50, tagCapacity: 300, decor: 40 },
 ];
 
 export interface TreeStyle {

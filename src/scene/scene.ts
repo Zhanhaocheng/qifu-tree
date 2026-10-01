@@ -391,7 +391,7 @@ export class QifuScene {
     this.kit = new Kit();
     this.world = buildTerrain(id, seed, this.quality, this.kit, this.renderer);
     this.scene.add(this.world.group);
-    this.fauna = new Fauna(this.world, id, this.quality, seed);
+    this.fauna = new Fauna(this.world, id, this.quality, seed, STAGE_PARAMS[Math.max(0, this.stage)].cameraDistance);
     this.fauna.onCall = (kind, pos) => this.events.onAnimal?.(kind, pos, this.camera.position);
     this.scene.add(this.fauna.group);
     this.particles = new Particles(this.world.particle, this.quality, () => this.treeHeight);
@@ -539,6 +539,7 @@ export class QifuScene {
     this.rebuildTree(animate && !first, prevHeight);
     this.layoutTags();
     const p = STAGE_PARAMS[stage];
+    this.fauna?.relayout(p.cameraDistance);
     this.controls.minDistance = 3.5;
     this.controls.maxDistance = p.cameraDistance * 2.6;
     const targetY = TERRACE_H + this.treeHeight * 0.5;
@@ -915,11 +916,11 @@ export class QifuScene {
     const dayW = 1 - s.night;
     this.key.position.copy(s.moonDir).lerp(s.sunDir, dayW).normalize().multiplyScalar(110).add(this.key.target.position);
     this.key.color.copy(s.sunColor).lerp(this.tmpC.set('#a8bcff'), s.night);
-    this.key.intensity = (s.sunIntensity * SUN_K * dayW + 1.5 * s.night) * world.lightBias;
+    this.key.intensity = (s.sunIntensity * SUN_K * dayW + 3.0 * s.night) * world.lightBias;
     this.hemi.color.copy(s.hemiSky).lerp(fog, 0.25);
     this.hemi.groundColor.copy(s.hemiGround);
-    this.hemi.intensity = s.hemiIntensity * HEMI_K * (1 + s.night * 0.35);
-    this.renderer.toneMappingExposure = 0.74 + s.night * 0.45;
+    this.hemi.intensity = s.hemiIntensity * HEMI_K * (1 + s.night * 0.9);
+    this.renderer.toneMappingExposure = 0.74 + s.night * 0.6 + (1 - THREE.MathUtils.smoothstep(s.sunDir.y, 0.0, 0.35)) * (1 - s.night) * 0.22;
 
     this.lightTint.setRGB(0.2, 0.26, 0.45).lerp(this.tmpC.set('#ffffff').multiplyScalar(0.9 + 0.1 * dayW), dayW);
     const trans = this.leafUniforms;
