@@ -2,14 +2,34 @@ import type { ItemDef, ItemId, PrayerTag, PublicUser, TerrainDef, TerrainId, Top
 
 export type StorageMode = 'local' | 'turso' | 'demo';
 
+export type ApiErrorKind = 'http' | 'timeout' | 'network';
+
 export class ApiError extends Error {
-  constructor(message: string, public status: number) {
+  constructor(
+    message: string,
+    public status: number,
+    public kind: ApiErrorKind = 'http',
+  ) {
     super(message);
   }
 }
 
 const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').trim().replace(/\/+$/, '');
+// "query" 风格：/api/index.php?path=/xxx，用于不支持 URL 重写的虚拟主机（默认 REST 风格 /api/xxx）
+const API_STYLE = ((import.meta.env.VITE_API_STYLE as string | undefined) ?? '').trim().toLowerCase();
 const TOKEN_KEY = 'qifu_token';
+
+const REQUEST_TIMEOUT_MS = 12000;
+const GET_RETRIES = 2;
+const RETRY_DELAY_MS = 700;
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+const MSG_TIMEOUT = '请求超时，网络较慢，请稍后重试';
+const MSG_NETWORK = '网络连接失败，请检查网络后重试';
+const MSG_TIMEOUT_WRITE = '请求超时，操作可能未成功，请刷新确认后再试';
+const MSG_SESSION = '登录已失效，请重新登录';
+const MSG_SERVER = '服务器开小差了，请稍后再试';
+const MSG_FAILED = '请求失败';
 
 // Bearer tokens are only used when the API lives on another origin, where
 // browsers (Safari, WeChat) may block the third-party session cookie.
@@ -32,29 +52,82 @@ function writeToken(token: string | null): void {
   }
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
-  let res: Response;
-  const headers: Record<string, string> = {};
-  if (body) headers['content-type'] = 'application/json';
-  const token = crossOrigin ? readToken() : null;
-  if (token) headers.authorization = `Bearer ${token}`;
+function endpoint(url: string): string {
+  if (API_STYLE === 'query') return `${API_BASE}/api/index.php?path=${url.replace(/^\/api/, '')}`;
+  return API_BASE + url;
+}
+
+interface RequestOptions {
+  /** 超时提示（POST 请求可能已经到达服务器，需要提示“可能未成功”） */
+  timeoutMessage?: string;
+  networkMessage?: string;
+}
+
+interface Attempt {
+  res: Response;
+  data: unknown;
+}
+
+async function attempt(method: string, url: string, headers: Record<string, string>, body: unknown): Promise<Attempt> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
-    res = await fetch(API_BASE + url, {
+    const res = await fetch(endpoint(url), {
       method,
       credentials: 'include',
       headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
     });
-  } catch {
-    throw new ApiError('网络连接失败，请检查网络后重试', 0);
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  } catch (e) {
+    if (ctrl.signal.aborted) throw new ApiError('', 0, 'timeout');
+    throw new ApiError('', 0, 'network');
+  } finally {
+    clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function request<T>(method: string, url: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body) headers['content-type'] = 'application/json';
+  const token = crossOrigin ? readToken() : null;
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  // 只有 GET（幂等）会自动重试；POST 可能已生效，绝不重发
+  const maxAttempts = method === 'GET' ? 1 + GET_RETRIES : 1;
+  let out: Attempt | undefined;
+  for (let i = 1; ; i++) {
+    try {
+      out = await attempt(method, url, headers, body);
+      if (!RETRYABLE_STATUS.has(out.res.status) || i >= maxAttempts) break;
+    } catch (e) {
+      if (i >= maxAttempts) {
+        const err = e as ApiError;
+        throw new ApiError(
+          err.kind === 'timeout' ? (opts.timeoutMessage ?? (method === 'GET' ? MSG_TIMEOUT : MSG_TIMEOUT_WRITE)) : (opts.networkMessage ?? MSG_NETWORK),
+          0,
+          err.kind,
+        );
+      }
+    }
+    await sleep(RETRY_DELAY_MS * i);
+  }
+
+  const { res, data } = out!;
   if (crossOrigin) {
     const issued = (data as { token?: unknown }).token;
     if (res.ok && typeof issued === 'string') writeToken(issued);
     else if (res.status === 401 && token) writeToken(null);
   }
-  if (!res.ok) throw new ApiError((data as { error?: string }).error ?? '请求失败', res.status);
+  if (!res.ok) {
+    const serverMessage = (data as { error?: unknown }).error;
+    const fallback = res.status === 401 ? MSG_SESSION : res.status >= 500 ? MSG_SERVER : MSG_FAILED;
+    throw new ApiError(typeof serverMessage === 'string' && serverMessage ? serverMessage : fallback, res.status);
+  }
   return data as T;
 }
 
@@ -75,8 +148,15 @@ export interface PrayersResponse {
 export const api = {
   config: () => request<Config>('GET', '/api/config'),
   me: () => request<{ user: PublicUser | null; mode: StorageMode }>('GET', '/api/me'),
-  register: (username: string, password: string) => request<{ user: PublicUser; token?: string }>('POST', '/api/register', { username, password }),
-  login: (username: string, password: string) => request<{ user: PublicUser; token?: string }>('POST', '/api/login', { username, password }),
+  register: (username: string, password: string) =>
+    request<{ user: PublicUser; token?: string }>('POST', '/api/register', { username, password }, {
+      timeoutMessage: '注册请求超时，可能未成功，请稍后重试或直接登录确认',
+      networkMessage: '网络连接失败，注册可能未成功，请检查网络后重试或直接登录确认',
+    }),
+  login: (username: string, password: string) =>
+    request<{ user: PublicUser; token?: string }>('POST', '/api/login', { username, password }, {
+      timeoutMessage: '登录请求超时，网络较慢，请稍后重试',
+    }),
   logout: () => request<{ ok: true }>('POST', '/api/logout').finally(() => writeToken(null)),
   checkin: () => request<{ gained: number; user: PublicUser }>('POST', '/api/checkin'),
   pray: (item: ItemId, text: string) => request<{ tag: PrayerTag; reward: number; user: PublicUser }>('POST', '/api/pray', { item, text }),

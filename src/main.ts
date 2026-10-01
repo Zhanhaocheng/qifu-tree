@@ -127,6 +127,7 @@ function handleError(e: unknown) {
   if (e instanceof ApiError && e.status === 401) {
     user = null;
     refresh();
+    toast(e.message, 'error');
     showAuth();
     return;
   }
@@ -140,7 +141,7 @@ function showAuth() {
       user = res.user;
       audio.click();
       refresh();
-      await loadTags();
+      loadTags().catch(() => undefined);
       toast(mode === 'register' ? `欢迎，${user.username}！已赠送 30 点能量` : `欢迎回来，${user.username}`, 'success');
       return null;
     } catch (e) {
@@ -158,8 +159,7 @@ async function submitPrayer(item: Parameters<typeof api.pray>[0], text: string):
     closeDialog();
     fx.pray(item, res.reward, res.tag.id);
     const before = scene.getStage();
-    const known = await loadTags();
-    void known;
+    await loadTags().catch(() => undefined);
     if (scene.getStage() === before) scene.focusTag(res.tag.id);
     scene.spawnBurst(res.tag.id);
     toast(res.reward ? `祈福牌已挂上树梢，返还 ${res.reward} 能量` : '祈福牌已挂上树梢，愿心想事成', 'success');
