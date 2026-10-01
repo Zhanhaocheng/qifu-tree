@@ -71,3 +71,5 @@ docker run -p 8080:8080 -v qifu-data:/data qifu-tree
 
 - 充值是**演示支付**，点击即到账，不产生真实扣款；接入微信/支付宝需要商户资质。
 - 所有音乐与音效均由 WebAudio 实时合成，没有第三方音频素材，不涉及授权问题。
+
+<!-- vercel git integration preview check -->
