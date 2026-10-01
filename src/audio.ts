@@ -4,7 +4,9 @@
  * - 音效：点击、签到、祈福（铜钟）、福币、错误
  * - 环境声：风声（随风力变化）、夜间虫鸣
  */
-import type { TerrainId } from '../shared/game';
+import type { ItemId, TerrainId } from '../shared/game';
+
+export type AudioState = 'on' | 'muted' | 'blocked';
 
 const STORAGE_KEY = 'qifu.muted';
 
@@ -46,42 +48,145 @@ export class AudioEngine {
   private night = 0;
   private wind = 0.1;
   muted: boolean;
-  private listeners = new Set<(muted: boolean) => void>();
+  private listeners = new Set<(state: AudioState) => void>();
+  private lastState: AudioState | null = null;
+  private lastTime = -1;
+  private stallTicks = 0;
+  private stalled = false;
+  private unlockFailed = false;
+  private welcomed = false;
+  private whiteNoise: AudioBuffer | null = null;
 
   constructor() {
     this.muted = localStorage.getItem(STORAGE_KEY) === '1';
-    const kick = () => {
+    const gesture = (e: Event) => {
+      if (this.muted) return;
+      if ((e.target as Element | null)?.closest?.('[data-sound-toggle]')) return;
       this.start();
-      if (this.ctx?.state === 'running') {
-        removeEventListener('pointerdown', kick);
-        removeEventListener('keydown', kick);
-      }
     };
-    addEventListener('pointerdown', kick);
-    addEventListener('keydown', kick);
+    for (const ev of ['pointerdown', 'touchend', 'keydown', 'click']) addEventListener(ev, gesture, { capture: true, passive: true });
     document.addEventListener('visibilitychange', () => {
       if (!this.ctx) return;
-      if (document.hidden) this.ctx.suspend();
-      else if (!this.muted) this.ctx.resume();
+      if (document.hidden) void this.ctx.suspend().catch(() => undefined);
+      else this.resumeSilently();
     });
+    addEventListener('pageshow', () => this.resumeSilently());
+    addEventListener('focus', () => this.resumeSilently());
+    try {
+      (navigator as unknown as { audioSession?: { type: string } }).audioSession && ((navigator as unknown as { audioSession: { type: string } }).audioSession.type = 'playback');
+    } catch {
+      /* 不支持则忽略 */
+    }
   }
 
-  onMuteChange(fn: (muted: boolean) => void) {
+  /** 音频当前的真实状态：on = 正在出声，muted = 用户关闭，blocked = 已开启但浏览器尚未放行 */
+  get state(): AudioState {
+    if (this.muted) return 'muted';
+    return this.ctx && this.ctx.state === 'running' && !this.stalled ? 'on' : 'blocked';
+  }
+
+  onStateChange(fn: (state: AudioState) => void) {
     this.listeners.add(fn);
-    fn(this.muted);
+    fn(this.state);
   }
 
+  private emit() {
+    const s = this.state;
+    if (s === this.lastState) return;
+    this.lastState = s;
+    this.listeners.forEach((l) => l(s));
+  }
+
+  private resumeSilently() {
+    if (!this.ctx || this.muted || document.hidden) return;
+    if (this.ctx.state !== 'running') void this.ctx.resume().then(() => this.emit(), () => undefined);
+    this.emit();
+  }
+
+  /** 必须在用户手势内调用才能真正解锁（iOS Safari 需要 touchend/click 内 resume 并播放一段静音） */
   start() {
+    if (this.muted) return;
     if (!this.ctx) this.init();
-    if (this.ctx && this.ctx.state === 'suspended' && !document.hidden) void this.ctx.resume();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state !== 'running' && !document.hidden) {
+      this.unlockSilently(ctx);
+      ctx
+        .resume()
+        .then(() => {
+          this.unlockFailed = ctx.state !== 'running';
+          this.afterRunning();
+        })
+        .catch(() => {
+          this.unlockFailed = true;
+          this.emit();
+        });
+    }
+    this.afterRunning();
+  }
+
+  private unlockSilently(ctx: AudioContext) {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, 22050);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private afterRunning() {
+    const ctx = this.ctx;
+    if (ctx && ctx.state === 'running') {
+      this.stalled = false;
+      this.stallTicks = 0;
+      this.lastTime = ctx.currentTime;
+      if (!this.welcomed) {
+        this.welcomed = true;
+        const t = ctx.currentTime + 0.05;
+        this.bell(t, NOTE('E6'), 0.05, 1.4, this.sfxBus);
+        this.bell(t + 0.16, NOTE('A6'), 0.04, 1.6, this.sfxBus);
+      }
+    }
+    this.emit();
+  }
+
+  private checkHealth() {
+    const ctx = this.ctx;
+    if (!ctx || this.muted || document.hidden) return;
+    if (ctx.state !== 'running') {
+      this.emit();
+      return;
+    }
+    const t = ctx.currentTime;
+    if (t === this.lastTime) {
+      if (++this.stallTicks >= 3 && !this.stalled) {
+        this.stalled = true;
+        void ctx.resume().catch(() => undefined);
+        this.emit();
+      }
+    } else {
+      this.lastTime = t;
+      this.stallTicks = 0;
+      if (this.stalled) {
+        this.stalled = false;
+        this.emit();
+      }
+    }
   }
 
   toggleMute() {
+    if (!this.muted && this.state !== 'on' && !this.unlockFailed) {
+      this.start();
+      return;
+    }
+    this.unlockFailed = false;
     this.muted = !this.muted;
     localStorage.setItem(STORAGE_KEY, this.muted ? '1' : '0');
-    this.start();
+    if (!this.muted) this.start();
     this.applyMute();
-    this.listeners.forEach((l) => l(this.muted));
+    this.emit();
     if (!this.muted) this.click();
   }
 
@@ -96,6 +201,7 @@ export class AudioEngine {
     if (!AC) return;
     const ctx = new AC();
     this.ctx = ctx;
+    ctx.onstatechange = () => this.afterRunning();
     this.master = ctx.createGain();
     this.master.gain.value = 0;
     const comp = ctx.createDynamicsCompressor();
@@ -172,7 +278,10 @@ export class AudioEngine {
     const now = ctx.currentTime;
     this.nextChordAt = now + 0.2;
     this.nextNoteAt = now + 3;
-    this.timer = window.setInterval(() => this.schedule(), 400);
+    this.timer = window.setInterval(() => {
+      this.checkHealth();
+      this.schedule();
+    }, 400);
     this.cricketTimer = window.setInterval(() => this.cricket(), 900);
     this.natureTimer = window.setInterval(() => this.nature(), 1100);
     this.setTerrain(this.terrain);
@@ -475,13 +584,135 @@ export class AudioEngine {
     ['C5', 'E5', 'G5', 'A5', 'C6'].forEach((n, i) => this.bell(t + i * 0.11, NOTE(n), 0.14, 1.8, this.sfxBus));
   }
 
-  pray() {
+  pray(item?: ItemId) {
     const ctx = this.ready();
     if (!ctx) return;
     const t = ctx.currentTime;
     this.bell(t, NOTE('A3'), 0.34, 5, this.sfxBus);
     this.bell(t + 0.9, NOTE('E5'), 0.1, 3, this.sfxBus);
     this.bell(t + 1.15, NOTE('A5'), 0.08, 3, this.sfxBus);
+    if (item) this.itemLayer(ctx, item, t);
+  }
+
+  private white() {
+    if (!this.whiteNoise) {
+      const ctx = this.ctx!;
+      const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      this.whiteNoise = buf;
+    }
+    return this.whiteNoise;
+  }
+
+  private noiseHit(at: number, dur: number, vol: number, f0: number, f1: number, q: number, type: BiquadFilterType = 'bandpass') {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = this.white();
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.Q.value = q;
+    f.frequency.setValueAtTime(f0, at);
+    f.frequency.exponentialRampToValueAtTime(f1, at + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + Math.min(0.02, dur / 3));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    src.connect(f).connect(g).connect(this.sfxBus);
+    src.start(at, Math.random() * 0.5);
+    src.stop(at + dur + 0.05);
+  }
+
+  private tone(at: number, freq: number, dur: number, vol: number, type: OscillatorType, cutoff = 0, glideTo = 0) {
+    const ctx = this.ctx!;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, at);
+    if (glideTo) o.frequency.exponentialRampToValueAtTime(glideTo, at + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + Math.min(0.05, dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    let node: AudioNode = o;
+    if (cutoff) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = cutoff;
+      o.connect(lp);
+      node = lp;
+    }
+    node.connect(g).connect(this.sfxBus);
+    o.start(at);
+    o.stop(at + dur + 0.05);
+  }
+
+  private coinClink(at: number, vol: number) {
+    const f = NOTE(['E7', 'G7', 'A6', 'C7'][Math.floor(Math.random() * 4)]);
+    this.bell(at, f, vol, 0.55, this.sfxBus);
+    this.noiseHit(at, 0.05, vol * 0.7, 7000, 5000, 4, 'highpass');
+  }
+
+  private itemLayer(ctx: AudioContext, item: ItemId, t: number) {
+    void ctx;
+    if (item === 'wood') {
+      this.tone(t, 180, 0.16, 0.3, 'triangle', 600, 90);
+      this.noiseHit(t, 0.07, 0.25, 900, 400, 1.2);
+      this.tone(t + 0.2, 150, 0.14, 0.2, 'triangle', 500, 80);
+    } else if (item === 'ribbon') {
+      this.noiseHit(t, 0.7, 0.13, 600, 5200, 0.8);
+      this.noiseHit(t + 0.5, 0.5, 0.08, 4200, 1500, 1.2);
+      ['E5', 'G5', 'A5'].forEach((n, i) => this.bell(t + 0.7 + i * 0.1, NOTE(n), 0.07, 1.6, this.sfxBus));
+    } else if (item === 'gold') {
+      for (let i = 0; i < 5; i++) this.coinClink(t + i * 0.07, 0.07);
+      ['C6', 'E6', 'G6', 'C7'].forEach((n, i) => this.bell(t + 0.25 + i * 0.09, NOTE(n), 0.1, 2, this.sfxBus));
+    } else if (item === 'lantern') {
+      this.noiseHit(t, 0.9, 0.1, 300, 1800, 1, 'lowpass');
+      this.tone(t, 220, 1.1, 0.12, 'sine', 0, 440);
+      ['D5', 'A5', 'D6', 'F6'].forEach((n, i) => this.bell(t + 0.5 + i * 0.16, NOTE(n), 0.09, 2.6, this.sfxBus));
+    } else {
+      ['A4', 'C5', 'E5', 'A5', 'C6', 'E6', 'A6'].forEach((n, i) => this.pluckSfx(t + i * 0.09, NOTE(n), 0.11));
+      [0, 4, 7].forEach((st) => this.tone(t + 0.6, NOTE('A3') * Math.pow(2, st / 12), 2.6, 0.07, 'sine'));
+      this.bell(t + 0.7, NOTE('E7'), 0.05, 3, this.sfxBus);
+    }
+  }
+
+  private pluckSfx(at: number, freq: number, vol: number) {
+    this.tone(at, freq, 1.4, vol, 'triangle');
+    this.tone(at, freq * 2, 0.8, vol * 0.3, 'sine');
+  }
+
+  /** 支付成功：金币叮当 + 上行钟琴 + 收尾和弦，金额越大越丰盛 */
+  payment(coins = 60) {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    const n = Math.min(10, 3 + Math.floor(coins / 60));
+    for (let i = 0; i < n; i++) this.coinClink(t + i * 0.055, 0.06 + Math.random() * 0.03);
+    const notes = coins >= 1000 ? ['C5', 'E5', 'G5', 'C6', 'E6', 'G6', 'C7'] : coins >= 300 ? ['C5', 'E5', 'G5', 'C6', 'E6', 'G6'] : ['E5', 'G5', 'C6', 'E6'];
+    notes.forEach((nn, i) => this.bell(t + 0.2 + i * 0.085, NOTE(nn), 0.13, 1.8, this.sfxBus));
+    const end = t + 0.25 + notes.length * 0.085;
+    [NOTE('C6'), NOTE('E6'), NOTE('G6')].forEach((f) => this.bell(end, f, 0.07, 2.6, this.sfxBus));
+    this.bell(t, NOTE('A4'), 0.12, 1.2, this.sfxBus);
+  }
+
+  /** 解锁地形：铜管式号角 + 钟琴闪烁 + 低沉锣声 */
+  terrainUnlock() {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime + 0.02;
+    this.bell(t, NOTE('A2'), 0.3, 5, this.sfxBus);
+    const brass = (at: number, notes: string[], dur: number, vol: number) =>
+      notes.forEach((n) => {
+        const f = NOTE(n);
+        this.tone(at, f, dur, vol, 'sawtooth', 1700);
+        this.tone(at, f * 1.004, dur, vol * 0.7, 'square', 1100);
+      });
+    brass(t, ['G3', 'D4'], 0.28, 0.05);
+    brass(t + 0.2, ['C4', 'G4'], 0.28, 0.05);
+    brass(t + 0.4, ['E4', 'C5'], 0.28, 0.055);
+    brass(t + 0.62, ['C4', 'G4', 'C5', 'E5'], 1.8, 0.06);
+    ['C6', 'D6', 'E6', 'G6', 'A6', 'C7', 'E7'].forEach((n, i) => this.bell(t + 0.62 + i * 0.07, NOTE(n), 0.1, 2.4, this.sfxBus));
+    this.noiseHit(t + 0.6, 1.2, 0.05, 3000, 9000, 0.6, 'highpass');
   }
 
   coin() {

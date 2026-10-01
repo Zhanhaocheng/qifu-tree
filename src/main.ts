@@ -2,6 +2,7 @@ import './style.css';
 import { STAGES, TERRAINS, stageOf, type PublicUser, type PrayerTag, type TerrainId } from '../shared/game';
 import { api, ApiError, type Config } from './api';
 import { AudioEngine } from './audio';
+import { createFx } from './fx';
 import { QifuScene, type Quality } from './scene/scene';
 import { STAGE_PARAMS } from './scene/tree';
 import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, openTerrain, showPopup, toast } from './ui';
@@ -13,6 +14,7 @@ const stageParam = params.get('stage');
 const terrainParam = params.get('terrain') as TerrainId | null;
 
 const audio = new AudioEngine();
+const fx = createFx(audio);
 for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, (e) => e.preventDefault());
 document.addEventListener('dblclick', (e) => e.preventDefault());
 let user: PublicUser | null = null;
@@ -40,7 +42,7 @@ const hud = mountHud({
     try {
       const res = await api.checkin();
       user = res.user;
-      audio.checkin();
+      fx.checkin(res.gained, user.streak);
       toast(`签到成功，获得 ${res.gained} 点能量（已连续 ${user.streak} 天）`, 'success');
       refresh();
     } catch (e) {
@@ -62,13 +64,14 @@ const hud = mountHud({
         const res = await api.setTerrain(t.id);
         user = res.user;
         audio.click();
-        if (res.spent) audio.coin();
         closeDialog();
         toast(res.spent ? `已解锁并切换到「${t.name}」（-${res.spent} 福币）` : `已切换到「${t.name}」`, 'success');
         showBusy(true);
         await new Promise((r) => setTimeout(r, 60));
         refresh();
         showBusy(false);
+        if (res.spent) fx.terrainUnlock(t, res.spent, user.coins);
+        else fx.terrainSwitch(t);
         return null;
       } catch (e) {
         audio.error();
@@ -84,8 +87,8 @@ const hud = mountHud({
       try {
         const res = await api.topup(pack.id);
         user = res.user;
-        audio.coin();
-        toast(`演示充值成功：+${res.added} 福币`, 'success');
+        fx.payment(res.added, user.coins, pack.label);
+        toast(`支付成功：+${res.added} 福币`, 'success');
         shop.setCoins(user.coins);
         refresh();
         return null;
@@ -96,7 +99,7 @@ const hud = mountHud({
     });
   },
 });
-audio.onMuteChange((m) => hud.setMuted(m));
+audio.onStateChange((s) => hud.setAudioState(s));
 
 const scene = new QifuScene(
   document.querySelector<HTMLCanvasElement>('#scene')!,
@@ -153,7 +156,7 @@ async function submitPrayer(item: Parameters<typeof api.pray>[0], text: string):
     user = res.user;
     refresh();
     closeDialog();
-    audio.pray();
+    fx.pray(item, res.reward, res.tag.id);
     const before = scene.getStage();
     const known = await loadTags();
     void known;

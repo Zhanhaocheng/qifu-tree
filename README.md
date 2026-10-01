@@ -73,3 +73,15 @@ docker run -p 8080:8080 -v qifu-data:/data qifu-tree
 - 所有音乐与音效均由 WebAudio 实时合成，没有第三方音频素材，不涉及授权问题。
 
 <!-- vercel git integration preview check -->
+
+## 反馈事件 `qifu:fx`
+
+支付成功、解锁地形、挂祈福牌、签到时，前端会在 `window` 上派发 `CustomEvent('qifu:fx')`，3D 场景可订阅它来播放粒子。类型定义见 `src/fx.ts` 的 `QifuFxEvent`。
+
+```ts
+window.addEventListener('qifu:fx', (e) => {
+  const d = e.detail; // d.type: 'payment' | 'terrain-unlock' | 'terrain-switch' | 'pray' | 'checkin'
+});
+```
+
+公共字段：`intensity`（1-3）、`particles`（`coins | petals | lantern | sparkle`，按主次排序）、`palette`（颜色数组）、`count`（建议粒子数）、`origin`（`tree | tag | terrain | screen`）、`ts`。专有字段：`payment` 带 `added/balance/pack`；`terrain-unlock` 带 `terrain/name/spent/balance`；`terrain-switch` 带 `terrain/name`；`pray` 带 `item/itemName/color/glow/reward/tagId`；`checkin` 带 `gained/streak`。
