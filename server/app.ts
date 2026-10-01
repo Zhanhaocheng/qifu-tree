@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { cors } from 'hono/cors';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Db, Exec } from './db.js';
@@ -22,6 +23,25 @@ const SESSION_COOKIE = 'qifu_session';
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const TAG_LIMIT = 300;
 
+export const DEFAULT_ALLOWED_ORIGINS = [
+  'http://qifu.laixi.cn',
+  'https://qifu.laixi.cn',
+  'https://qifu-tree.vercel.app',
+  'http://localhost:47231',
+  'http://127.0.0.1:47231',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+
+export function allowedOriginsFromEnv(env: Record<string, string | undefined> = process.env): string[] {
+  const raw = env.ALLOWED_ORIGINS;
+  if (raw === undefined) return DEFAULT_ALLOWED_ORIGINS;
+  return raw
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
 interface UserRow {
   id: number;
   username: string;
@@ -39,10 +59,24 @@ export interface AppOptions {
   timeZone?: string;
   now?: () => number;
   testAccount?: TestAccountConfig | null;
+  allowedOrigins?: string[];
 }
 
-export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now, testAccount = testAccountFromEnv() }: AppOptions) {
+export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now, testAccount = testAccountFromEnv(), allowedOrigins = allowedOriginsFromEnv() }: AppOptions) {
   const app = new Hono();
+  const origins = new Set(allowedOrigins);
+
+  app.use(
+    '*',
+    cors({
+      origin: (origin) => (origins.has(origin) ? origin : null),
+      allowHeaders: ['Content-Type', 'Authorization'],
+      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      credentials: true,
+      maxAge: 86400,
+    }),
+  );
+
   let db!: Db;
   app.use('*', async (_c, next) => {
     if (!db) {
@@ -104,7 +138,17 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     };
   };
 
-  const startSession = async (c: Context, userId: number) => {
+  const bearerToken = (c: Context): string | undefined => {
+    const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') ?? '');
+    return m?.[1];
+  };
+
+  const sessionTokens = (c: Context): string[] => {
+    const tokens = [bearerToken(c), getCookie(c, SESSION_COOKIE)].filter((t): t is string => !!t);
+    return [...new Set(tokens)];
+  };
+
+  const startSession = async (c: Context, userId: number): Promise<string> => {
     const token = crypto.randomBytes(32).toString('base64url');
     await db.run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', [
       hashToken(token),
@@ -118,21 +162,24 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       maxAge: SESSION_TTL_MS / 1000,
       secure: c.req.header('x-forwarded-proto') === 'https',
     });
+    return token;
   };
 
   const currentUser = async (c: Context): Promise<UserRow | undefined> => {
-    const token = getCookie(c, SESSION_COOKIE);
-    if (!token) return undefined;
-    const row = await db.get<{ user_id: number; expires_at: number }>(
-      'SELECT user_id, expires_at FROM sessions WHERE token_hash = ?',
-      [hashToken(token)],
-    );
-    if (!row) return undefined;
-    if (row.expires_at < now()) {
-      await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
-      return undefined;
+    for (const token of sessionTokens(c)) {
+      const row = await db.get<{ user_id: number; expires_at: number }>(
+        'SELECT user_id, expires_at FROM sessions WHERE token_hash = ?',
+        [hashToken(token)],
+      );
+      if (!row) continue;
+      if (row.expires_at < now()) {
+        await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
+        continue;
+      }
+      const user = await getUser(row.user_id);
+      if (user) return user;
     }
-    return getUser(row.user_id);
+    return undefined;
   };
 
   const body = async (c: Context): Promise<Record<string, unknown>> => {
@@ -164,9 +211,9 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
         [username, hash, START_ENERGY, now()],
       );
       noteFailure(key);
-      await startSession(c, info.lastId);
+      const token = await startSession(c, info.lastId);
       await ensureTerrain((await getUser(info.lastId))!);
-      return c.json({ user: await toPublic((await getUser(info.lastId))!) });
+      return c.json({ user: await toPublic((await getUser(info.lastId))!), token });
     } catch {
       return fail(c, '用户名已被使用', 409);
     }
@@ -186,13 +233,12 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       return fail(c, '用户名或密码错误', 401);
     }
     failures.delete(key);
-    await startSession(c, u.id);
-    return c.json({ user: await toPublic(u) });
+    const token = await startSession(c, u.id);
+    return c.json({ user: await toPublic(u), token });
   });
 
   app.post('/api/logout', async (c) => {
-    const token = getCookie(c, SESSION_COOKIE);
-    if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
+    for (const token of sessionTokens(c)) await db.run('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
     deleteCookie(c, SESSION_COOKIE, { path: '/' });
     return c.json({ ok: true });
   });

@@ -85,3 +85,10 @@ window.addEventListener('qifu:fx', (e) => {
 ```
 
 公共字段：`intensity`（1-3）、`particles`（`coins | petals | lantern | sparkle`，按主次排序）、`palette`（颜色数组）、`count`（建议粒子数）、`origin`（`tree | tag | terrain | screen`）、`ts`。专有字段：`payment` 带 `added/balance/pack`；`terrain-unlock` 带 `terrain/name/spent/balance`；`terrain-switch` 带 `terrain/name`；`pray` 带 `item/itemName/color/glow/reward/tagId`；`checkin` 带 `gained/streak`。
+
+
+## 分离部署（静态前端 + 跨域 API）
+
+- 构建前端时设置 `VITE_API_BASE=https://qifu-tree.vercel.app npm run build`，把 `dist/` 上传到任意静态主机（资源使用相对路径，无需服务端重写）。不设置时默认同源 `/api`。
+- 跨域时登录/注册响应会额外返回 `token`，前端存入 localStorage 并以 `Authorization: Bearer` 发送；服务端同时接受 Cookie 或 Bearer。
+- 服务端通过环境变量 `ALLOWED_ORIGINS`（逗号分隔）配置 CORS 白名单，默认包含 `qifu.laixi.cn`、`qifu-tree.vercel.app` 与本地开发地址。

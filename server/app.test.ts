@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from './app.js';
+import { allowedOriginsFromEnv, createApp } from './app.js';
 import { memoryDb } from './db.js';
 import { testAccountFromEnv } from './testAccount.js';
 
@@ -165,4 +165,82 @@ test('regular users are still charged', async () => {
   const s = appWith(TEST_CFG);
   await s.call('POST', '/api/register', { username: 'normal', password: '123456' });
   assert.equal((await s.call('POST', '/api/pray', { item: 'lotus', text: '愿' })).status, 402);
+});
+
+const SITE = 'http://qifu.laixi.cn';
+
+test('CORS: allowed origin gets credentials headers; preflight succeeds; others get none', async () => {
+  const app = createApp({ db: memoryDb(), testAccount: null });
+  const pre = await app.request('/api/login', {
+    method: 'OPTIONS',
+    headers: { origin: SITE, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' },
+  });
+  assert.ok(pre.status === 204 || pre.status === 200);
+  assert.equal(pre.headers.get('access-control-allow-origin'), SITE);
+  assert.equal(pre.headers.get('access-control-allow-credentials'), 'true');
+  const allowHeaders = (pre.headers.get('access-control-allow-headers') ?? '').toLowerCase();
+  assert.ok(allowHeaders.includes('authorization') && allowHeaders.includes('content-type'));
+
+  const res = await app.request('/api/config', { headers: { origin: 'https://qifu.laixi.cn' } });
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://qifu.laixi.cn');
+  assert.equal(res.headers.get('access-control-allow-credentials'), 'true');
+
+  const evil = await app.request('/api/config', { headers: { origin: 'https://evil.example' } });
+  assert.equal(evil.status, 200);
+  assert.equal(evil.headers.get('access-control-allow-origin'), null);
+
+  const same = await app.request('/api/config');
+  assert.equal(same.headers.get('access-control-allow-origin'), null);
+});
+
+test('CORS origins come from ALLOWED_ORIGINS', async () => {
+  assert.ok(allowedOriginsFromEnv({}).includes('http://qifu.laixi.cn'));
+  assert.deepEqual(allowedOriginsFromEnv({ ALLOWED_ORIGINS: ' https://a.example/ , https://b.example ' }), ['https://a.example', 'https://b.example']);
+  const app = createApp({ db: memoryDb(), testAccount: null, allowedOrigins: allowedOriginsFromEnv({ ALLOWED_ORIGINS: 'https://a.example' }) });
+  const ok = await app.request('/api/config', { headers: { origin: 'https://a.example' } });
+  assert.equal(ok.headers.get('access-control-allow-origin'), 'https://a.example');
+  const no = await app.request('/api/config', { headers: { origin: SITE } });
+  assert.equal(no.headers.get('access-control-allow-origin'), null);
+});
+
+test('bearer token auth: login returns token, works without cookie, logout invalidates it', async () => {
+  const app = createApp({ db: memoryDb(), testAccount: null });
+  const send = (method: string, url: string, token?: string, payload?: unknown) =>
+    app.request(url, {
+      method,
+      headers: { origin: SITE, 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+
+  const reg = await send('POST', '/api/register', undefined, { username: 'cross', password: '123456' });
+  assert.equal(reg.status, 200);
+  assert.ok(reg.headers.get('set-cookie')?.includes('qifu_session='));
+  const regToken = ((await reg.json()) as any).token as string;
+  assert.ok(typeof regToken === 'string' && regToken.length > 20);
+
+  const login = await send('POST', '/api/login', undefined, { username: 'cross', password: '123456' });
+  const token = ((await login.json()) as any).token as string;
+  assert.notEqual(token, regToken);
+
+  assert.equal(((await (await send('GET', '/api/me', token)).json()) as any).user.username, 'cross');
+  assert.equal(((await (await send('GET', '/api/me')).json()) as any).user, null);
+  assert.equal(((await (await send('GET', '/api/me', 'bogus')).json()) as any).user, null);
+  assert.equal((await send('POST', '/api/checkin', token)).status, 200);
+  assert.equal((await send('POST', '/api/checkin')).status, 401);
+
+  assert.equal((await send('POST', '/api/logout', token)).status, 200);
+  assert.equal(((await (await send('GET', '/api/me', token)).json()) as any).user, null);
+  assert.equal(((await (await send('GET', '/api/me', regToken)).json()) as any).user.username, 'cross');
+});
+
+test('a valid bearer token wins over a stale cookie', async () => {
+  const app = createApp({ db: memoryDb(), testAccount: null });
+  const reg = await app.request('/api/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'mixed', password: '123456' }),
+  });
+  const token = ((await reg.json()) as any).token as string;
+  const me = await app.request('/api/me', { headers: { cookie: 'qifu_session=stale', authorization: `Bearer ${token}` } });
+  assert.equal(((await me.json()) as any).user.username, 'mixed');
 });
