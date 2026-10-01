@@ -275,7 +275,7 @@ const RIDGE_FRAG = /* glsl */ `
     float drift = fbm4(vec2(theta * 3.0 + uTime * 0.012, vH * 0.045));
     float bands = smoothstep(0.35, 0.8, drift) * smoothstep(uTop * 0.85, uTop * 0.15, vH);
     float mist = clamp(uMist + foot * 0.85 + bands * 0.4 + (1.0 - lightK) * 0.06, 0.0, 1.0);
-    vec3 haze = uFog * uHazeTint;
+    vec3 haze = uFog * uHazeTint * 0.87;
     col = mix(col, haze, mist);
     gl_FragColor = vec4(col, smoothstep(0.0, uSoft, below + 0.15));
     #include <tonemapping_fragment>
@@ -294,7 +294,7 @@ const MIST_FRAG = /* glsl */ `
     float band = exp(-pow((y - 0.35) * 2.2, 2.0));
     float n = fbm4(vec2(theta * 5.0 + uTime * 0.02 + uSeed, vH * 0.05 + uTime * 0.004));
     float n2 = fbm4(vec2(theta * 13.0 - uTime * 0.03, vH * 0.12 + uSeed));
-    float a = band * smoothstep(0.25, 0.8, n * 0.8 + n2 * 0.35) * uAlpha;
+    float a = band * smoothstep(0.42, 0.9, n * 0.8 + n2 * 0.35) * uAlpha;
     gl_FragColor = vec4(mix(uFog, uTint, 0.35), a);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -526,7 +526,7 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
           uFog: { value: new THREE.Color() },
           uTint: { value: new THREE.Color('#ffffff') },
           uTime: { value: 0 },
-          uAlpha: { value: 0.5 + i * 0.05 },
+          uAlpha: { value: 0.16 + i * 0.012 },
           uRadius: { value: l.radius },
           uH0: { value: h0 },
           uHeight: { value: mh },
