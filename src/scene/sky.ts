@@ -254,8 +254,8 @@ const DOME_FRAG = /* glsl */ `
           float lit = exp(-max(sh - dens * 0.18, 0.0) * 2.4);
           float core = smoothstep(0.35, 1.0, dens);
           float edge = pow(1.0 - dens, 2.0);
-          vec3 shadowCol = uAmbient * (0.8 - 0.22 * core);
-          vec3 c = mix(shadowCol, uLightColor * 1.45, lit);
+          vec3 shadowCol = uAmbient * (1.0 - 0.3 * core);
+          vec3 c = mix(shadowCol, uLightColor * 2.1, lit);
           c += uLightColor * edge * lit * (0.25 + 1.4 * pow(sunLit, 5.0));
           c *= mix(1.0, 0.8, core * (1.0 - lit));
           float fogK = 1.0 - smoothstep(0.0, 0.24, y);
@@ -406,9 +406,9 @@ export class SkyRig {
 
     const u = (this.dome.material as THREE.ShaderMaterial).uniforms;
     u.uTime.value = time;
-    u.uCover.value = Math.min(0.92, params.cloudCover + 0.06);
+    u.uCover.value = Math.min(0.9, params.cloudCover * 0.78 + 0.02);
     u.uNight.value = s.night;
-    u.uGain.value = 0.9 + day * 0.15;
+    u.uGain.value = 0.85 + day * 0.3;
     u.uHaze.value = 0.35 + params.fogTintAmount * 0.5;
     u.uTop.value.copy(s.top);
     u.uMid.value.copy(s.mid);
@@ -418,7 +418,7 @@ export class SkyRig {
     u.uMoonDir.value.copy(s.moonDir);
     u.uLightDir.value.copy(this.lightDir);
     u.uLightColor.value.copy(this.lightColor).multiplyScalar(s.night > 0.5 ? 0.55 : 1);
-    u.uAmbient.value.copy(this.ambient).multiplyScalar(0.65 + day * 0.5);
+    u.uAmbient.value.copy(this.ambient).multiplyScalar(0.55 + day * 0.7);
 
     const st = (this.stars.material as THREE.ShaderMaterial).uniforms;
     st.uTime.value = time;

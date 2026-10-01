@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { Water } from 'three/examples/jsm/objects/Water.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { TerrainId } from '../../shared/game';
 import type { SkyParams } from './sky';
 import { fbmWorld, leafTexture, surface, waterNormal, type SurfaceKind } from './textures';
 import { NOISE_GLSL, noiseTexture } from './sky';
 import type { TreeStyle } from './tree';
 import { mulberry32 } from './tree';
-import { Kit, archBridge, bambooStalkGeometry, house, paifang, pavilion, pineGeometry, scatterRocks, stele, stoneLantern, terrace, wupengBoat, type Glow } from './props';
+import { buildBedGrass, buildFlowers, buildGrass, buildPebbles, buildLitter, buildRocks, buildRootBed, makeWindUniforms, type GroundCtx, type WindUniforms } from './ground';
+import { Kit, archBridge, bambooStalkGeometry, house, paifang, pavilion, pineGeometry, stele, stoneLantern, terrace, wupengBoat, type Glow } from './props';
 
 export type ParticleKind = 'petal' | 'leaf' | 'snow' | 'sand' | 'bamboo';
 export type QualityLevel = 'low' | 'medium' | 'high';
@@ -219,6 +219,15 @@ const CONFIGS: Record<TerrainId, TerrainConfig> = {
   },
 };
 
+
+const LOOK: Record<TerrainId, { soil: string; moss: string; dry: string; pebble: { light: string; dark: string }; litter: string[] }> = {
+  mountain: { soil: '#4a3524', moss: '#4f6e34', dry: '#a49a52', pebble: { light: '#a9a59a', dark: '#4e4a44' }, litter: ['#8a5a2a', '#b9792e', '#7a3f22', '#c9a23c'] },
+  bamboo: { soil: '#3d2c1e', moss: '#3a6a30', dry: '#b0a85a', pebble: { light: '#9aa093', dark: '#454a42' }, litter: ['#9fb84a', '#c8c860', '#7a6a2c', '#5f8a3a'] },
+  jiangnan: { soil: '#463527', moss: '#587a3c', dry: '#b6ad62', pebble: { light: '#b4b0a4', dark: '#5a5650' }, litter: ['#f0a8b8', '#f4c9d2', '#9a7a3a', '#c9aa4a'] },
+  desert: { soil: '#7b5a36', moss: '#a8864c', dry: '#c8a860', pebble: { light: '#d4b98a', dark: '#7a5a3a' }, litter: ['#b58a3a', '#8f6a2a', '#d3b13f'] },
+  snow: { soil: '#5a4a3c', moss: '#bcc9d8', dry: '#c9c39a', pebble: { light: '#c9ccd2', dark: '#6a6e76' }, litter: ['#d8d6c8', '#a89a7a', '#e9e6dc'] },
+};
+
 const RIDGE_VERT = /* glsl */ `
   attribute float aTop;
   varying vec3 vWorld; varying float vH; varying float vTop;
@@ -323,13 +332,13 @@ function expandRidges(src: Ridge[]): Ridge[] {
     const snowLine = a.snowLine !== undefined || b.snowLine !== undefined ? mixv(a.snowLine ?? b.snowLine!, b.snowLine ?? a.snowLine!) : undefined;
     out.push({
       radius: mixv(a.radius, b.radius) * (0.9 + i * 0.03),
-      base: mixv(a.base, b.base),
-      amp: mixv(a.amp, b.amp) * (1 + (i % 2 ? 0.1 : -0.08)),
+      base: mixv(a.base, b.base) * 0.7,
+      amp: mixv(a.amp, b.amp) * 0.62 * (1 + (i % 2 ? 0.1 : -0.08)),
       freq: mixv(a.freq, b.freq) * (i % 2 ? 1.18 : 0.9),
       sharp: mixv(a.sharp, b.sharp),
       color: `#${c0.getHexString()}`,
-      mist: clamp(mixv(a.mist, b.mist) * 0.75 + i * 0.045, 0, 0.9),
-      snowLine,
+      mist: clamp(0.2 + 0.62 * Math.pow(i / (N - 1), 0.85) + (mixv(a.mist, b.mist) - 0.3) * 0.3, 0.12, 0.88),
+      snowLine: snowLine !== undefined ? snowLine * 0.62 : undefined,
     });
   }
   return out;
@@ -378,23 +387,13 @@ function mistGeometry(radius: number, h0: number, height: number): THREE.BufferG
   return g;
 }
 
-function grassGeometry(): THREE.BufferGeometry {
-  const g = new THREE.BufferGeometry();
-  const w = 0.035;
-  const v = [-w, 0, 0, w, 0, 0, -w * 0.8, 0.5, 0, w * 0.8, 0.5, 0, 0, 1, 0];
-  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
-  g.setIndex([0, 1, 2, 2, 1, 3, 2, 3, 4]);
-  return g;
-}
-
 export function build(id: TerrainId, userSeed: number, quality: QualityLevel, kit: Kit, renderer: THREE.WebGLRenderer): TerrainWorld {
   const cfg = CONFIGS[id];
   const group = new THREE.Group();
   const rng = mulberry32(userSeed * 7919 + id.length * 31);
   const disposables: { dispose(): void }[] = [];
   const texSize = quality === 'low' ? 256 : 512;
-  const uniforms = { uTime: { value: 0 }, uWind: { value: 0 }, uGrow: { value: 1 } };
+  const uniforms = makeWindUniforms();
   const updaters: ((dt: number, env: TerrainEnv) => void)[] = [];
   const flowerSpots: THREE.Vector3[] = [];
   const waterSpots: THREE.Vector3[] = [];
@@ -448,10 +447,11 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
         '#include <map_fragment>',
         `vec4 dA = texture2D( map, vMapUv );
          vec4 dA2 = texture2D( map, vMapUv * 0.137 + 0.31 );
+         vec4 dA3 = texture2D( map, vMapUv * 4.7 + 0.11 );
          vec4 dB = texture2D( mapB, vMapUv * 0.8 );
          float sp = smoothstep(0.25, 0.75, vSplat);
          vec4 sampledDiffuseColor = mix(dA, dB, sp);
-         sampledDiffuseColor.rgb *= 0.72 + 0.56 * dot(dA2.rgb, vec3(0.333));
+         sampledDiffuseColor.rgb *= (0.72 + 0.56 * dot(dA2.rgb, vec3(0.333))) * (0.78 + 0.5 * dot(dA3.rgb, vec3(0.333)));
          diffuseColor *= sampledDiffuseColor;`,
       )
       .replace(
@@ -629,128 +629,24 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
   gate.scale.setScalar(1.1);
   group.add(gate);
 
-  // ------------------------------------------------ grass & flowers
+  // ------------------------------------------------ root bed, grass, flowers, rocks, pebbles
+  const gctx: GroundCtx = { group, heightAt, isWater, rng, quality, uniforms, disposables, terraceR: TERRACE_R, terraceH: TERRACE_H, splat: cfg.splat, id };
+  const bedTint = LOOK[id];
+  const bed = buildRootBed(gctx, kit, bedTint.soil, bedTint.moss);
+  const blades = quality === 'high' ? 170000 : quality === 'medium' ? 80000 : 24000;
   if (cfg.grass) {
     const gcfg = cfg.grass;
-    const total = quality === 'high' ? 90000 : quality === 'medium' ? 38000 : 12000;
-    const g = grassGeometry();
-    const mat = new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide, roughness: 0.85 });
-    mat.onBeforeCompile = (shader) => {
-      Object.assign(shader.uniforms, uniforms, { uBase: { value: new THREE.Color(gcfg.base) }, uTip: { value: new THREE.Color(gcfg.tip) } });
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime; uniform float uWind; varying float vH;')
-        .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = normalize(vec3(0.0, 1.0, 0.0) + normal * 0.35);')
-        .replace(
-          '#include <project_vertex>',
-          `vH = position.y;
-           vec4 mvPosition = vec4(transformed, 1.0);
-           #ifdef USE_INSTANCING
-             vec3 ip = vec3(instanceMatrix[3]);
-             mvPosition = instanceMatrix * mvPosition;
-             float ph = ip.x * 0.9 + ip.z * 1.3;
-             float bend = position.y * position.y;
-             float gust = uWind * (0.6 + 0.4 * sin(ip.x * 0.15 + uTime * 0.7));
-             mvPosition.x += (sin(uTime * 1.8 + ph) * 0.05 + gust * 0.35 + sin(uTime * 4.0 + ph * 2.0) * 0.02 * uWind) * bend * instanceMatrix[1][1];
-             mvPosition.z += cos(uTime * 1.5 + ph * 1.2) * 0.04 * bend * instanceMatrix[1][1] * (0.4 + uWind);
-           #endif
-           mvPosition = modelViewMatrix * mvPosition;
-           gl_Position = projectionMatrix * mvPosition;`,
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uBase; uniform vec3 uTip; varying float vH;')
-        .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= mix(uBase * 0.55, uTip, smoothstep(0.0, 1.0, vH));');
-    };
-    const grass = new THREE.InstancedMesh(g, mat, total);
-    grass.receiveShadow = quality === 'high';
-    grass.frustumCulled = false;
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const e = new THREE.Euler();
-    const col = new THREE.Color();
-    let placed = 0;
-    const spread = gcfg.spread * (quality === 'low' ? 0.7 : 1);
-    const tries = total * 2.2;
-    for (let t = 0; t < tries && placed < total; t++) {
-      const clump = t % 5 !== 0;
-      const a = rng() * Math.PI * 2;
-      const r = Math.sqrt(rng()) * spread;
-      let x = Math.cos(a) * r;
-      let z = Math.sin(a) * r;
-      if (clump) {
-        const cx = Math.floor(x / 1.6);
-        const cz = Math.floor(z / 1.6);
-        const hcl = Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453;
-        x = (cx + 0.5 + (hcl - Math.floor(hcl)) * 0.6) * 1.6 + (rng() - 0.5) * 0.9;
-        z = (cz + 0.5 + (Math.sin(hcl) * 0.5 + 0.5) * 0.6) * 1.6 + (rng() - 0.5) * 0.9;
-      }
-      const rr = Math.hypot(x, z);
-      if (rr < TERRACE_R + 1.6) continue;
-      if (Math.abs(x - Math.sin((z - 8) * 0.22 * 0.667) * 1.4) < 2.5 && z > 6 && z < 40) continue;
-      const h = heightAt(x, z);
-      const dens = gcfg.density(x, z, h);
-      if (dens <= 0 || rng() > dens * (1 - sm(rr, spread * 0.55, spread))) continue;
-      const hs = gcfg.height * (0.55 + rng() * 0.9) * (1 + fbmWorld(x * 0.2, z * 0.2, 2, 1) * 0.6);
-      q.setFromEuler(e.set((rng() - 0.5) * 0.25, rng() * 6.28, (rng() - 0.5) * 0.25));
-      m.compose(new THREE.Vector3(x, h - 0.02, z), q, new THREE.Vector3(1.6 + rng() * 1.6, hs, 1));
-      grass.setMatrixAt(placed, m);
-      col.setHSL(0.02 * (rng() - 0.5), 0.15 * (rng() - 0.5), 0.9 + rng() * 0.25);
-      col.multiplyScalar(0.8 + rng() * 0.4);
-      grass.setColorAt(placed, col);
-      placed++;
-    }
-    grass.count = placed;
-    group.add(grass);
-    disposables.push(g, mat);
-
+    const gopts = { base: gcfg.base, tip: gcfg.tip, dry: bedTint.dry, height: gcfg.height * 1.25, spread: gcfg.spread, density: gcfg.density, blades };
+    buildGrass(gctx, gopts);
+    buildBedGrass(gctx, gopts, bed.y, bed.radius, quality === 'high' ? 5200 : quality === 'medium' ? 2600 : 900);
     if (cfg.flowers.length) {
-      const fc = quality === 'high' ? 520 : quality === 'medium' ? 260 : 100;
-      const stem = new THREE.CylinderGeometry(0.008, 0.012, 0.42, 4).translate(0, 0.21, 0);
-      const head = new THREE.SphereGeometry(0.05, 6, 4).scale(1, 0.6, 1).translate(0, 0.44, 0);
-      const fgeo = mergeGeometries([stem.toNonIndexed(), head.toNonIndexed()])!;
-      const fmat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.7 });
-      fmat.onBeforeCompile = (shader) => {
-        shader.fragmentShader = shader.fragmentShader;
-      };
-      const flowers = new THREE.InstancedMesh(fgeo, fmat, fc);
-      let fp = 0;
-      for (let t = 0; t < fc * 4 && fp < fc; t++) {
-        const a = rng() * Math.PI * 2;
-        const r = 9 + Math.sqrt(rng()) * 32;
-        const x = Math.cos(a) * r;
-        const z = Math.sin(a) * r;
-        const h = heightAt(x, z);
-        if (isWater(x, z) || fbmWorld(x * 0.1, z * 0.1, 2, 44) < 0.5) continue;
-        m.compose(new THREE.Vector3(x, h, z), q.setFromEuler(e.set((rng() - 0.5) * 0.3, rng() * 6, (rng() - 0.5) * 0.3)), new THREE.Vector3().setScalar(0.8 + rng() * 0.8));
-        flowers.setMatrixAt(fp, m);
-        col.set(cfg.flowers[Math.floor(rng() * cfg.flowers.length)]);
-        flowers.setColorAt(fp, col);
-        if (fp % 6 === 0) flowerSpots.push(new THREE.Vector3(x, h + 0.5, z));
-        fp++;
-      }
-      flowers.count = fp;
-      group.add(flowers);
+      const fc = quality === 'high' ? 2400 : quality === 'medium' ? 1200 : 400;
+      flowerSpots.push(...buildFlowers(gctx, cfg.flowers, fc, TERRACE_R + 1.2, 40));
     }
   }
-
-  // ------------------------------------------------ rocks
-  const rockCount = quality === 'low' ? 14 : 34;
-  const rocks = scatterRocks(
-    kit,
-    rockCount,
-    (i, r) => {
-      const a = r() * Math.PI * 2;
-      const d = 10 + r() * 46;
-      const x = Math.cos(a) * d;
-      const z = Math.sin(a) * d;
-      if (isWater(x, z) || (Math.abs(x) < 4 && z > 6)) return null;
-      const h = heightAt(x, z);
-      if (h < -20) return null;
-      return { x, z, y: h, s: 0.35 + Math.pow(r(), 2.2) * (id === 'mountain' || id === 'snow' ? 2.6 : 1.6) };
-    },
-    userSeed + 3,
-    id === 'snow' ? undefined : undefined,
-  );
-  group.add(rocks);
+  const rocks = buildRocks(gctx, quality === 'low' ? 18 : 46, id === 'mountain' || id === 'snow' ? 3.4 : 2.4);
+  buildPebbles(gctx, quality === 'high' ? 1500 : quality === 'medium' ? 750 : 220, rocks, bedTint.pebble);
+  buildLitter(gctx, quality === 'high' ? 900 : quality === 'medium' ? 450 : 140, bedTint.litter, TERRACE_R * 1.9, bed.y);
 
   // ------------------------------------------------ terrain specifics
   const shared = { group, heightAt, isWater, rng, kit, quality, uniforms, disposables };
@@ -765,6 +661,9 @@ export function build(id: TerrainId, userSeed: number, quality: QualityLevel, ki
   const update = (dt: number, env: TerrainEnv) => {
     uniforms.uTime.value = env.time;
     uniforms.uWind.value = env.wind;
+    uniforms.uSunDir.value.copy(env.sunDir);
+    uniforms.uSunColor.value.copy(env.sunColor);
+    uniforms.uNight.value = env.night;
     for (const rm of ridgeMats) {
       rm.uniforms.uFog.value.copy(env.fogColor);
       rm.uniforms.uLight.value.copy(env.light);
@@ -830,7 +729,7 @@ interface Shared {
   rng: () => number;
   kit: Kit;
   quality: QualityLevel;
-  uniforms: { uTime: { value: number }; uWind: { value: number }; uGrow: { value: number } };
+  uniforms: WindUniforms;
   disposables: { dispose(): void }[];
 }
 

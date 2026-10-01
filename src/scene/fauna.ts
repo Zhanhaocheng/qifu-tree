@@ -71,7 +71,7 @@ function makeRabbit(snow: boolean): Creature {
   const haunch = ell(0.14, 0.13, 0.15, fur, 0, 0.14, -0.1);
   g.add(body, head, tail, haunch);
   g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
-  return base('rabbit', g, [], head, undefined, 1.4, 1.2);
+  return base('rabbit', g, [], head, undefined, 1.4, 2.2);
 }
 
 function makeDeer(): Creature {
@@ -103,6 +103,15 @@ function makeDeer(): Creature {
   neck.add(head);
   const tail = ell(0.05, 0.07, 0.05, mat('#f2ead8'), 0, 1.15, -0.78);
   g.add(body, under, neck, tail);
+  const spot = mat('#f3e6cc', 0.9);
+  for (let i = 0; i < 16; i++) {
+    const a = (i * 2.399) % 6.28;
+    const sx = Math.sin(a) * 0.24;
+    const sz = ((i * 0.37) % 1) * 1.1 - 0.55;
+    const sy = 1.0 + Math.cos(a) * 0.27;
+    if (sy < 1.08) continue;
+    g.add(ell(0.028, 0.012, 0.028, spot, sx, sy, sz));
+  }
   const legs: THREE.Object3D[] = [];
   for (const [x, z] of [
     [-0.18, 0.5],
@@ -117,7 +126,7 @@ function makeDeer(): Creature {
     g.add(pivot);
   }
   g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
-  return base('deer', g, legs, head, neck, 1.1, 1.0);
+  return base('deer', g, legs, head, neck, 1.1, 1.8);
 }
 
 function makeCrane(): Creature {
@@ -151,7 +160,7 @@ function makeCrane(): Creature {
     g.add(pivot);
   }
   g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
-  return base('crane', g, legs, head, neck, 0.5, 1.0);
+  return base('crane', g, legs, head, neck, 0.5, 1.7);
 }
 
 function makeCamel(): Creature {
@@ -194,35 +203,52 @@ function base(kind: Kind, group: THREE.Group, legs: THREE.Object3D[], head: THRE
   return { kind, group, legs, head, neck, speed, state: 'idle', timer: Math.random() * 3, target: new THREE.Vector3(), heading: Math.random() * 6, phase: Math.random() * 10, nextCall: 15 + Math.random() * 40, scale };
 }
 
+function fan(poly: number[][], mirror: boolean): number[] {
+  const out: number[] = [];
+  const pts = mirror ? poly.map(([x, y, z]) => [-x, y, z]) : poly;
+  for (let i = 1; i < pts.length - 1; i++) out.push(...pts[0], ...pts[i], ...pts[i + 1]);
+  return out;
+}
+
 function wingGeometry(kind: 'butterfly' | 'dragonfly' | 'bird'): THREE.BufferGeometry {
   if (kind === 'butterfly') {
+    const fore = [[0.02, 0, 0.1], [0.14, 0, 0.26], [0.36, 0, 0.2], [0.34, 0, 0.0], [0.05, 0, -0.03]];
+    const hind = [[0.05, 0, -0.03], [0.32, 0, -0.05], [0.26, 0, -0.24], [0.1, 0, -0.27], [0.02, 0, -0.1]];
+    const v: number[] = [];
+    for (const m of [false, true]) v.push(...fan(fore, m), ...fan(hind, m));
+    const parts: THREE.BufferGeometry[] = [];
     const g = new THREE.BufferGeometry();
-    const v = [0, 0, 0.14, 0.28, 0, 0.16, 0.3, 0, -0.1, 0, 0, -0.08, 0, 0, 0.14, 0, 0, -0.08, -0.3, 0, -0.1, -0.28, 0, 0.16];
     g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    g.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
     g.computeVertexNormals();
-    return g;
+    parts.push(g);
+    const body = new THREE.CylinderGeometry(0.014, 0.01, 0.34, 5).rotateX(Math.PI / 2).translate(0, 0, 0.0);
+    const bodyN = body.toNonIndexed();
+    bodyN.deleteAttribute('uv');
+    parts.push(bodyN);
+    return mergeGeometries(parts)!;
   }
   if (kind === 'dragonfly') {
     const parts: THREE.BufferGeometry[] = [];
-    const body = new THREE.CylinderGeometry(0.012, 0.006, 0.42, 5).rotateX(Math.PI / 2).translate(0, 0, -0.1);
+    const body = new THREE.CylinderGeometry(0.014, 0.006, 0.46, 5).rotateX(Math.PI / 2).translate(0, 0, -0.1);
     parts.push(body.toNonIndexed());
-    const head = new THREE.SphereGeometry(0.028, 6, 5).translate(0, 0, 0.14);
+    const head = new THREE.SphereGeometry(0.034, 6, 5).translate(0, 0, 0.15);
     parts.push(head.toNonIndexed());
-    for (const z of [0.06, -0.02]) {
+    const thorax = new THREE.SphereGeometry(0.03, 6, 5).scale(1, 1, 1.5).translate(0, 0, 0.07);
+    parts.push(thorax.toNonIndexed());
+    for (const z of [0.07, -0.01]) {
       for (const s of [-1, 1]) {
-        const w = new THREE.PlaneGeometry(0.3, 0.05).rotateX(-Math.PI / 2).translate(s * 0.17, 0, z);
+        const w = new THREE.PlaneGeometry(0.34, 0.06).rotateX(-Math.PI / 2).translate(s * 0.19, 0, z);
         parts.push(w.toNonIndexed());
       }
     }
     return mergeGeometries(parts)!;
   }
+  const v: number[] = [];
+  const wing = [[0.05, 0, 0.12], [0.45, 0.02, 0.08], [0.95, 0.06, -0.12], [0.62, 0.03, -0.2], [0.05, 0, -0.18]];
+  for (const m of [false, true]) v.push(...fan(wing, m));
+  v.push(0, 0.03, 0.38, -0.07, 0, 0.0, 0.07, 0, 0.0, -0.07, 0, 0.0, 0, 0.02, -0.5, 0.07, 0, 0.0);
+  v.push(-0.09, 0, -0.24, 0, 0, -0.62, 0.09, 0, -0.24);
   const g = new THREE.BufferGeometry();
-  const v = [
-    0, 0, 0.35, -0.08, 0, 0, 0.08, 0, 0, 0, 0, -0.3, -0.08, 0, 0, 0.08, 0, 0,
-    -0.08, 0, 0.1, -0.9, 0.05, -0.05, -0.08, 0, -0.15,
-    0.08, 0, 0.1, 0.08, 0, -0.15, 0.9, 0.05, -0.05,
-  ];
   g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
   g.computeVertexNormals();
   return g;
@@ -274,7 +300,6 @@ export class Fauna {
   private flyers = { b: [] as Flyer[], d: [] as Flyer[] };
   private birdData: { angle: number; radius: number; height: number; speed: number; phase: number; bob: number }[] = [];
   private fireflies: THREE.Points | null = null;
-  private fireflyBase: Float32Array = new Float32Array(0);
   private mats: THREE.MeshStandardMaterial[] = [];
   private rng: () => number;
   private dummy = new THREE.Object3D();
@@ -290,22 +315,22 @@ export class Fauna {
     this.spawnFireflies(q);
   }
 
-  private pickGround(minR: number, maxR: number): THREE.Vector3 {
-    for (let i = 0; i < 40; i++) {
-      const a = this.rng() * Math.PI * 2;
+  private pickGround(minR: number, maxR: number, view = false): THREE.Vector3 {
+    for (let i = 0; i < 60; i++) {
+      const a = view ? Math.PI / 2 + (this.rng() - 0.5) * 3.8 : this.rng() * Math.PI * 2;
       const r = minR + this.rng() * (maxR - minR);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       const h = this.world.heightAt(x, z);
       if (this.world.isWater(x, z) || h < -1.5) continue;
-      if (Math.abs(x) < 4 && z > 6) continue;
+      if (Math.abs(x) < 5 && z > 6) continue;
       return new THREE.Vector3(x, h, z);
     }
-    return new THREE.Vector3(12, 0, 12);
+    return new THREE.Vector3(14, 0, 14);
   }
 
   private add(c: Creature, minR = 12, maxR = 34) {
-    const p = this.pickGround(minR, maxR);
+    const p = this.pickGround(minR, maxR, true);
     c.group.position.copy(p);
     c.group.scale.setScalar(c.scale);
     c.target.copy(p);
@@ -316,33 +341,39 @@ export class Fauna {
   private spawnCreatures() {
     const id = this.id;
     if (id === 'mountain') {
-      this.add(makeRabbit(false), 10, 26);
-      this.add(makeRabbit(false), 10, 26);
-      this.add(makeCrane(), 10, 28);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 24);
+      this.add(makeCrane(), 12, 28);
     } else if (id === 'bamboo') {
-      this.add(makeDeer(), 12, 30);
-      this.add(makeDeer(), 12, 30);
-      this.add(makeRabbit(false), 10, 26);
-      this.add(makeRabbit(false), 10, 26);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeDeer(), 14, 30);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 24);
     } else if (id === 'jiangnan') {
-      const c1 = makeCrane();
-      const c2 = makeCrane();
-      this.add(c1, 10, 30);
-      this.add(c2, 10, 30);
-      this.add(makeRabbit(false), 10, 24);
+      for (let i = 0; i < 3; i++) this.add(makeCrane(), 11, 30);
+      this.add(makeDeer(), 14, 28);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 22);
     } else if (id === 'desert') {
       for (let i = 0; i < 4; i++) {
         const cam = makeCamel();
-        cam.scale = 0.9;
-        cam.path = { radius: 58 + i * 0.5, angle: 0.5 + i * 0.09, dir: 1 };
-        this.add(cam, 40, 60);
+        cam.scale = 1.4;
+        cam.path = { radius: 40 + i * 0.7, angle: 0.9 + i * 0.1, dir: 1 };
+        this.add(cam, 36, 48);
       }
-      this.add(makeRabbit(false), 10, 24);
+      this.add(makeRabbit(false), 11, 22);
+      this.add(makeRabbit(false), 11, 24);
     } else if (id === 'snow') {
-      this.add(makeDeer(), 12, 32);
-      this.add(makeDeer(), 12, 32);
-      this.add(makeRabbit(true), 10, 26);
-      this.add(makeRabbit(true), 10, 26);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeDeer(), 13, 28);
+      this.add(makeRabbit(true), 11, 22);
+      this.add(makeRabbit(true), 11, 22);
+      this.add(makeRabbit(true), 11, 24);
     }
   }
 
@@ -350,16 +381,17 @@ export class Fauna {
     const id = this.id;
     const hasFlora = id === 'mountain' || id === 'bamboo' || id === 'jiangnan';
     if (hasFlora) {
-      const n = Math.round(26 * q);
+      const n = Math.round(46 * q);
       const geo = wingGeometry('butterfly');
       const m = flapMaterial('#ffffff', 22, 0.95);
       this.mats.push(m);
       const im = new THREE.InstancedMesh(geo, m, n);
       im.frustumCulled = false;
-      const cols = ['#ffffff', '#f5d34a', '#f08a34', '#5b8fe0', '#ec7fb0'];
+      const cols = ['#ffffff', '#f5d34a', '#f08a34', '#5b8fe0', '#ec7fb0', '#d9e86a'];
       for (let i = 0; i < n; i++) {
         im.setColorAt(i, new THREE.Color(cols[Math.floor(this.rng() * cols.length)]));
-        const spot = this.pickGround(9, 20).add(new THREE.Vector3(0, 0.8, 0));
+        const fs = this.world.flowerSpots;
+        const spot = (fs.length && this.rng() < 0.7 ? fs[Math.floor(this.rng() * fs.length)].clone() : this.pickGround(11, 26, true)).add(new THREE.Vector3(0, 0.8, 0));
         this.flyers.b.push({ center: spot.clone(), r: 1.5 + this.rng() * 3, fa: 0.3 + this.rng() * 0.4, fb: 0.4 + this.rng() * 0.5, fc: 0.25 + this.rng() * 0.4, pa: this.rng() * 6, pb: this.rng() * 6, speed: 1, height: 0.6 + this.rng() * 1.2 });
       }
       im.scale.setScalar(1);
@@ -367,7 +399,7 @@ export class Fauna {
       this.group.add(im);
     }
     if (id === 'bamboo' || id === 'jiangnan') {
-      const n = Math.round(8 * q);
+      const n = Math.round(12 * q);
       const geo = wingGeometry('dragonfly');
       const m = flapMaterial('#5fb7c9', 55, 0.25);
       this.mats.push(m);
@@ -385,7 +417,7 @@ export class Fauna {
   }
 
   private spawnBirds(q: number) {
-    const n = Math.round((this.id === 'desert' ? 4 : this.id === 'snow' ? 7 : 11) * q);
+    const n = Math.round((this.id === 'desert' ? 6 : this.id === 'snow' ? 10 : 16) * q);
     const dark = this.id === 'snow' || this.id === 'desert';
     const m = flapMaterial(dark ? '#1c1c20' : '#f0efe8', 6, 0.8);
     m.side = THREE.DoubleSide;
@@ -394,8 +426,8 @@ export class Fauna {
     im.frustumCulled = false;
     im.castShadow = false;
     for (let i = 0; i < n; i++) {
-      this.birdData.push({ angle: this.rng() * 6.28, radius: 18 + this.rng() * 26, height: 13 + this.rng() * 18, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
-      im.setColorAt(i, new THREE.Color(1, 1, 1));
+      this.birdData.push({ angle: this.rng() * 6.28, radius: 16 + this.rng() * 28, height: 9 + this.rng() * 15, speed: (0.05 + this.rng() * 0.05) * (this.rng() > 0.5 ? 1 : -1), phase: this.rng() * 10, bob: this.rng() * 6 });
+      im.setColorAt(i, new THREE.Color().setScalar(0.8 + this.rng() * 0.3));
     }
     this.birds = im;
     this.group.add(im);
@@ -403,18 +435,45 @@ export class Fauna {
 
   private spawnFireflies(q: number) {
     if (this.id === 'desert' || this.id === 'snow') return;
-    const n = Math.round(70 * q);
+    const n = Math.round(260 * q);
     const geo = new THREE.BufferGeometry();
-    this.fireflyBase = new Float32Array(n * 4);
+    const base = new Float32Array(n * 3);
+    const ph = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      const p = this.pickGround(8, 34);
-      this.fireflyBase[i * 4] = p.x;
-      this.fireflyBase[i * 4 + 1] = p.y + 0.5 + this.rng() * 2.6;
-      this.fireflyBase[i * 4 + 2] = p.z;
-      this.fireflyBase[i * 4 + 3] = this.rng() * 100;
+      const p = i % 4 === 0 ? new THREE.Vector3((this.rng() - 0.5) * 18, 0, (this.rng() - 0.5) * 18).setY(this.world.heightAt(0, 0)) : this.pickGround(9, 34, i % 2 === 0);
+      base[i * 3] = p.x;
+      base[i * 3 + 1] = p.y + 0.4 + this.rng() * 3.2;
+      base[i * 3 + 2] = p.z;
+      ph[i] = this.rng() * 100;
     }
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    const mat2 = new THREE.PointsMaterial({ map: glowTexture(), color: 0xd6ff7a, size: 0.55, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    geo.setAttribute('position', new THREE.BufferAttribute(base, 3));
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+    const mat2 = new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: glowTexture() }, uTime: { value: 0 }, uOpacity: { value: 0 }, uWind: { value: 0 } },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexShader: `
+        attribute float aPhase; uniform float uTime; uniform float uWind; varying float vB;
+        void main() {
+          vec3 p = position;
+          p.x += sin(uTime * 0.35 + aPhase) * 2.4 + uWind * 2.0 + sin(uTime * 1.3 + aPhase * 3.0) * 0.3;
+          p.y += sin(uTime * 0.6 + aPhase * 1.3) * 0.8;
+          p.z += cos(uTime * 0.3 + aPhase * 0.7) * 2.4;
+          float b = 0.5 + 0.5 * sin(uTime * (1.2 + fract(aPhase) * 1.4) + aPhase);
+          vB = pow(b, 1.6);
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_PointSize = (0.65 + vB * 1.1) * (300.0 / max(-mv.z, 0.5));
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform sampler2D uMap; uniform float uOpacity; varying float vB;
+        void main() {
+          vec4 t = texture2D(uMap, gl_PointCoord);
+          vec3 c = mix(vec3(0.55, 0.95, 0.25), vec3(1.0, 0.95, 0.5), t.a * t.a);
+          gl_FragColor = vec4(c * (1.5 + vB * 2.5), t.a * vB * uOpacity);
+        }`,
+    });
     this.fireflies = new THREE.Points(geo, mat2);
     this.fireflies.frustumCulled = false;
     this.group.add(this.fireflies);
@@ -471,7 +530,7 @@ export class Fauna {
         let diff = want - c.heading;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
         c.heading += diff * Math.min(1, dt * 3);
-        const sp = c.speed * (c.kind === 'rabbit' ? 1 + Math.max(0, Math.sin(c.phase * 9)) : 1);
+        const sp = c.speed * Math.sqrt(c.scale) * (c.kind === 'rabbit' ? 1 + Math.max(0, Math.sin(c.phase * 9)) : 1);
         p.x += Math.sin(c.heading) * sp * dt;
         p.z += Math.cos(c.heading) * sp * dt;
       }
@@ -534,7 +593,7 @@ export class Fauna {
         this.prevPos.set(i, prev);
         d.position.set(x, y, z);
         if (dx * dx + dz * dz > 1e-8) d.rotation.set(0, Math.atan2(dx, dz), Math.sin(t * 2 + f.pa) * 0.3);
-        d.scale.setScalar(day > 0.25 ? 2.0 : 0.0001);
+        d.scale.setScalar(day > 0.25 ? 3.1 : 0.0001);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });
@@ -557,7 +616,7 @@ export class Fauna {
         this.prevPos.set(key, prev);
         d.position.set(x, y, z);
         if (dx * dx + dz * dz > 1e-9) d.rotation.set(0, Math.atan2(dx, dz), 0);
-        d.scale.setScalar(day > 0.25 ? 1 : 0.0001);
+        d.scale.setScalar(day > 0.25 ? 2.3 : 0.0001);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });
@@ -572,7 +631,7 @@ export class Fauna {
         const y = b.height + Math.sin(env.time * 0.4 + b.bob) * 2;
         d.position.set(x, y, z);
         d.rotation.set(0, -b.angle + (b.speed > 0 ? Math.PI : 0) + Math.PI / 2 * (b.speed > 0 ? 1 : -1) + Math.PI, Math.sin(env.time * 0.5 + b.bob) * 0.25);
-        d.scale.setScalar(this.id === 'desert' ? 3.2 : 2.4);
+        d.scale.setScalar(this.id === 'desert' ? 4.6 : 3.8);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
       });
@@ -586,24 +645,11 @@ export class Fauna {
     }
     if (this.fireflies) {
       const pts = this.fireflies;
-      (pts.material as THREE.PointsMaterial).opacity = Math.max(0, env.night - 0.15) * 1.1;
+      const u = (pts.material as THREE.ShaderMaterial).uniforms;
+      u.uOpacity.value = Math.min(1, Math.max(0, env.night - 0.12) * 1.4);
+      u.uTime.value = env.time;
+      u.uWind.value = env.wind;
       pts.visible = env.night > 0.1;
-      if (pts.visible) {
-        const pos = pts.geometry.attributes.position as THREE.BufferAttribute;
-        const n = pos.count;
-        for (let i = 0; i < n; i++) {
-          const b = i * 4;
-          const ph = this.fireflyBase[b + 3];
-          const blink = 0.5 + 0.5 * Math.sin(env.time * 1.6 + ph);
-          pos.setXYZ(
-            i,
-            this.fireflyBase[b] + Math.sin(env.time * 0.35 + ph) * 2.4 + env.wind * 2,
-            this.fireflyBase[b + 1] + Math.sin(env.time * 0.6 + ph * 1.3) * 0.7 - (1 - blink) * 0.0,
-            this.fireflyBase[b + 2] + Math.cos(env.time * 0.3 + ph * 0.7) * 2.4,
-          );
-        }
-        pos.needsUpdate = true;
-      }
     }
   }
 

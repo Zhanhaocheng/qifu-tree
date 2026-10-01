@@ -25,7 +25,7 @@ const MAX_TAGS = 300;
 const MAX_SPARKS = 240;
 const MAX_DECOR = 60;
 const SUN_K = 1.9;
-const HEMI_K = 1.6;
+const HEMI_K = 2.2;
 
 applyHeightFog();
 
@@ -216,6 +216,7 @@ export class QifuScene {
     this.hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
     this.key = new THREE.DirectionalLight(0xffffff, 3);
     this.key.shadow.bias = -0.0004;
+    this.key.shadow.intensity = 0.78;
     this.key.shadow.normalBias = 0.06;
     this.key.target.position.set(0, 6, 0);
     this.scene.add(this.hemi, this.key, this.key.target);
@@ -476,7 +477,7 @@ export class QifuScene {
     const h = Math.max(1, parent.clientHeight);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
-    this.camera.fov = w / h < 0.8 ? 55 : 42;
+    this.camera.fov = w / h < 0.8 ? 55 : 46;
     this.camera.updateProjectionMatrix();
     this.composer?.setPixelRatio(this.renderer.getPixelRatio());
     this.composer?.setSize(w, h);
@@ -624,7 +625,7 @@ export class QifuScene {
   }
 
   private baseFov() {
-    return this.camera.aspect < 0.8 ? 55 : 42;
+    return this.camera.aspect < 0.8 ? 55 : 46;
   }
 
   private introPose(k: number) {
@@ -896,7 +897,7 @@ export class QifuScene {
     this.hemi.color.copy(s.hemiSky).lerp(fog, 0.25);
     this.hemi.groundColor.copy(s.hemiGround);
     this.hemi.intensity = s.hemiIntensity * HEMI_K * (1 + s.night * 0.35);
-    this.renderer.toneMappingExposure = 0.66 + s.night * 0.5;
+    this.renderer.toneMappingExposure = 0.74 + s.night * 0.45;
 
     this.lightTint.setRGB(0.2, 0.26, 0.45).lerp(this.tmpC.set('#ffffff').multiplyScalar(0.9 + 0.1 * dayW), dayW);
     const trans = this.leafUniforms;
