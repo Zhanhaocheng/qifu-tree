@@ -46,6 +46,17 @@ vercel --prod
 
 可选环境变量：`APP_TZ`（签到日期的时区，默认 `Asia/Shanghai`）。
 
+## PHP + MySQL 后端（国内虚拟主机，备选）
+
+`php-backend/` 是与 Hono 接口完全兼容的 PHP 版（PHP 7.4+/8.x，MySQL 5.6+，无需 SSH/Node，FTP 上传即可），用于把前端和接口都放在国内主机的同一个域名下。Vercel/Node 版不受影响。
+
+- 部署步骤（中文）：[php-backend/php-deploy-guide.md](php-backend/php-deploy-guide.md)
+- 打包：`npm run build:php` → `dist-php/qifu-php-site.zip`（前端 + `api/` + `schema.sql`），以及主机不支持 URL 重写时用的 `qifu-frontend-query-style.zip`（`VITE_API_STYLE=query`）
+- 导出 Turso 数据（只读）：`TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run export:turso`，生成给 `install.php` 导入的 `import.sql`
+- 对比测试：`npm run test:parity`（对 Node 与 PHP 执行同一批场景并逐字节比较响应；需 `QIFU_DB_*` 指向可清空的测试库）；`node scripts/parity/frontend-api.test.mjs` 测前端超时/重试逻辑
+
+前端构建变量：`VITE_API_BASE`（跨域接口地址，默认同域）、`VITE_API_STYLE=query`（使用 `/api/index.php?path=/xxx`）。前端请求有 12 秒超时，GET 自动重试 2 次，POST 不重试。
+
 ## 内置测试账号
 
 每次启动（含 Vercel 冷启动、演示模式内存重置、本地 SQLite、Turso）都会幂等地确保下面的账号存在，登录时也会再次校验：

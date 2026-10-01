@@ -5,3 +5,10 @@ data
 .env
 .vercel
 .env*
+
+# PHP backend: never commit real config or data
+php-backend/api/config.php
+php-backend/api/import.sql
+import.sql
+*.import.sql
+dist-php

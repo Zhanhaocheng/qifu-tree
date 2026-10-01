@@ -4,7 +4,12 @@ if (!defined('QIFU')) { http_response_code(403); exit; }
 
 return [
     // ---- MySQL（在景安控制面板「数据库」里创建后，按面板显示的信息填写）----
-    'DB_HOST' => 'localhost',   // 面板里通常是 localhost 或类似 xxx.mysql.rds.zzidc.com 的地址
+    // DB_HOST 有两种写法，按顺序试：
+    //   1) PHP 和 MySQL 在同一台主机（网站上线后的正常情况）：先试 'localhost'；
+    //      不行就填面板里写的「内网地址/数据库服务器地址」。
+    //   2) 面板给的外网地址（形如 xxxx.dnstoo.com）：用于你本机的 Navicat/命令行等远程连接，
+    //      通常要先在面板里放行你的出口 IP；网站里的 PHP 也可以填它，但可能更慢。
+    'DB_HOST' => 'localhost',
     'DB_PORT' => 3306,
     'DB_NAME' => '',
     'DB_USER' => '',
