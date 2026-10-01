@@ -243,8 +243,16 @@ export function openAuth(onSubmit: (mode: 'login' | 'register', username: string
     e.preventDefault();
     const data = new FormData(form);
     submit.disabled = true;
-    const message = await onSubmit(mode, String(data.get('username')), String(data.get('password')));
-    submit.disabled = false;
+    submit.textContent = mode === 'login' ? '登录中…' : '注册中…';
+    let message: string | null;
+    try {
+      message = await onSubmit(mode, String(data.get('username')), String(data.get('password')));
+    } catch {
+      message = '操作失败，请稍后重试';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = mode === 'login' ? '登录' : '注册并进入';
+    }
     if (message) {
       err.textContent = message;
       err.hidden = false;
@@ -301,9 +309,18 @@ export function openPray(
   $('form', d.el).addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!selected) return;
+    const label = submit.textContent;
     submit.disabled = true;
-    const message = await onSubmit(selected.id, text.value);
-    submit.disabled = false;
+    submit.textContent = '提交中…';
+    let message: string | null;
+    try {
+      message = await onSubmit(selected.id, text.value);
+    } catch {
+      message = '操作失败，请稍后重试';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
+    }
     if (message) {
       err.textContent = message;
       err.hidden = false;
@@ -341,8 +358,14 @@ export function openShop(
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       const pack = packs.find((p) => p.id === btn.dataset.pack)!;
-      const message = await onBuy(pack);
-      btn.disabled = false;
+      let message: string | null;
+      try {
+        message = await onBuy(pack);
+      } catch {
+        message = '充值失败，请稍后重试';
+      } finally {
+        btn.disabled = false;
+      }
       if (message) {
         err.textContent = message;
         err.hidden = false;
@@ -390,8 +413,14 @@ export function openTerrain(
     if (!btn) return;
     const t = terrains.find((x) => x.id === btn.dataset.terrain)!;
     btn.disabled = true;
-    const message = await onPick(t);
-    btn.disabled = false;
+    let message: string | null;
+    try {
+      message = await onPick(t);
+    } catch {
+      message = '切换失败，请稍后重试';
+    } finally {
+      btn.disabled = false;
+    }
     if (message) {
       err.textContent = message;
       err.hidden = false;
