@@ -4,6 +4,7 @@ const WEB_PORT = Number(process.env.WEB_PORT ?? 47231);
 const API_PORT = Number(process.env.PORT ?? 47232);
 
 export default defineConfig({
+  base: './',
   server: {
     host: '0.0.0.0',
     port: WEB_PORT,
