@@ -1,5 +1,6 @@
 import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
 import type { StorageMode } from './api';
+import type { AudioState } from './audio';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 
@@ -15,6 +16,42 @@ const ICONS = {
   land: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 19 9 7l4 6 3-4 6 10zM16 5.5a1.5 1.5 0 1 0 .01 0"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></svg>',
 };
+
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const tweens = new WeakMap<HTMLElement, number>();
+
+/** 数字滚动到新值；delta 提示（+8 / -10）只在 floatDelta 为 true 时浮出 */
+export function tweenNumber(el: HTMLElement, to: number, floatDelta = false) {
+  const from = el.dataset.v === undefined ? to : Number(el.dataset.v);
+  el.dataset.v = String(to);
+  const running = tweens.get(el);
+  if (running) cancelAnimationFrame(running);
+  if (from === to || reduceMotion()) {
+    el.textContent = String(to);
+    return;
+  }
+  const host = el.closest<HTMLElement>('.stat, .balance') ?? el.parentElement!;
+  host.classList.remove('bump-up', 'bump-down');
+  void host.offsetWidth;
+  host.classList.add(to > from ? 'bump-up' : 'bump-down');
+  if (floatDelta) {
+    const tag = document.createElement('i');
+    tag.className = `delta ${to > from ? 'up' : 'down'}`;
+    tag.textContent = `${to > from ? '+' : '-'}${Math.abs(to - from)}`;
+    host.appendChild(tag);
+    setTimeout(() => tag.remove(), 1500);
+  }
+  const dur = Math.min(1200, 450 + Math.abs(to - from) * 4);
+  const t0 = performance.now();
+  const step = (now: number) => {
+    const k = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = String(Math.round(from + (to - from) * e));
+    if (k < 1) tweens.set(el, requestAnimationFrame(step));
+    else tweens.delete(el);
+  };
+  tweens.set(el, requestAnimationFrame(step));
+}
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -37,7 +74,7 @@ export function mountHud(h: HudHandlers) {
         <span class="chip" id="stage-chip"></span>
       </div>
       <div class="top-right">
-        <button class="icon-btn" id="btn-sound" aria-label="声音开关" title="声音开关"></button>
+        <div class="sound-wrap"><button class="icon-btn" id="btn-sound" data-sound-toggle aria-label="声音开关" title="声音开关"></button><span class="sound-tip" id="sound-tip" hidden>轻点开启声音</span></div>
         <div id="user-area"></div>
       </div>
     </header>
@@ -64,17 +101,24 @@ export function mountHud(h: HudHandlers) {
   $('#btn-add-coin').addEventListener('click', h.onShop);
   setTimeout(() => ($('#hint').style.opacity = '0'), 9000);
 
+  let shownUserId: number | null = null;
+
   return {
-    setMuted(muted: boolean) {
-      $('#btn-sound').innerHTML = muted ? ICONS.soundOff : ICONS.soundOn;
-      $('#btn-sound').setAttribute('aria-pressed', String(!muted));
-      $('#btn-sound').classList.toggle('off', muted);
+    setAudioState(state: AudioState) {
+      const btn = $('#btn-sound');
+      btn.innerHTML = state === 'on' ? ICONS.soundOn : ICONS.soundOff;
+      btn.setAttribute('aria-pressed', String(state === 'on'));
+      btn.setAttribute('aria-label', state === 'on' ? '声音已开启，点击静音' : state === 'muted' ? '声音已关闭，点击开启' : '声音尚未开启，轻点开启');
+      btn.classList.toggle('off', state !== 'on');
+      btn.classList.toggle('blocked', state === 'blocked');
+      $('#sound-tip').hidden = state !== 'blocked';
     },
     setUser(user: PublicUser | null) {
       const area = $('#user-area');
       if (!user) {
         area.innerHTML = '<button class="login-btn" id="btn-login">登录 / 注册</button>';
         $('#btn-login').addEventListener('click', h.onLogin);
+        shownUserId = null;
         $('#stats').hidden = true;
         $('#growth').hidden = true;
         $('#checkin-label').textContent = '每日签到';
@@ -84,9 +128,16 @@ export function mountHud(h: HudHandlers) {
       area.innerHTML = `<div class="user-pill"><span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span><span class="uname">${esc(user.username)}</span><button class="linkish" id="btn-logout">退出</button></div>`;
       $('#btn-logout').addEventListener('click', h.onLogout);
       $('#stats').hidden = false;
-      $('#st-energy').textContent = String(user.energy);
-      $('#st-coins').textContent = String(user.coins);
-      $('#st-streak').textContent = String(user.streak);
+      const same = shownUserId === user.id;
+      shownUserId = user.id;
+      for (const [id, v] of [['#st-energy', user.energy], ['#st-coins', user.coins], ['#st-streak', user.streak]] as const) {
+        const el = $(id);
+        if (same) tweenNumber(el, v, id !== '#st-streak');
+        else {
+          delete el.dataset.v;
+          tweenNumber(el, v);
+        }
+      }
       $('#checkin-label').textContent = user.checkedInToday ? '今日已签到' : '每日签到';
       $('#btn-checkin').classList.toggle('done', user.checkedInToday);
       const next = STAGES[user.stage + 1];
@@ -269,7 +320,7 @@ export function openShop(
   const d = openDialog(
     '福币商店',
     `<div class="notice">演示支付：点击即到账，不会产生任何真实扣款。真实支付（微信 / 支付宝）需要商户资质，将在后续阶段接入。</div>
-     <p class="balance">当前福币 <b id="shop-coins">${user.coins}</b></p>
+     <p class="balance">当前福币 <b id="shop-coins" data-v="${user.coins}">${user.coins}</b></p>
      <div class="packs">${packs
        .map(
          (p) => `<button class="pack" data-pack="${p.id}">
@@ -295,10 +346,16 @@ export function openShop(
       if (message) {
         err.textContent = message;
         err.hidden = false;
-      } else err.hidden = true;
+      } else {
+        err.hidden = true;
+        btn.classList.remove('paid');
+        void btn.offsetWidth;
+        btn.classList.add('paid');
+        setTimeout(() => btn.classList.remove('paid'), 1200);
+      }
     }),
   );
-  return { setCoins: (n: number) => ($('#shop-coins', d.el).textContent = String(n)) };
+  return { setCoins: (n: number) => tweenNumber($('#shop-coins', d.el), n) };
 }
 
 export function openTerrain(
@@ -311,7 +368,7 @@ export function openTerrain(
       .map((t) => {
         const owned = u.ownedTerrains.includes(t.id);
         const current = u.terrain === t.id;
-        const status = current ? '<span class="tstate now">当前</span>' : owned ? '<span class="tstate own">已拥有 · 免费切换</span>' : `<span class="tstate buy">${t.price} 福币解锁</span>`;
+        const status = current ? '<span class="tstate now">当前使用</span>' : owned ? '<span class="tstate own">已拥有</span>' : `<span class="tstate buy">${t.price} 福币解锁</span>`;
         return `<button type="button" class="terrain ${current ? 'current' : ''}" data-terrain="${t.id}">
           <i class="tswatch" style="--a:${t.swatch[0]};--b:${t.swatch[1]}"></i>
           <span class="tinfo"><b>${t.name}<small>${t.subtitle}</small></b><em>${t.desc}</em></span>
@@ -321,7 +378,7 @@ export function openTerrain(
       .join('');
   const d = openDialog(
     '选择地形',
-    `<p class="balance">首次进入时会按你的编号生成专属地形。解锁后可随时免费切换。当前福币 <b id="terrain-coins">${user.coins}</b></p>
+    `<p class="balance">首次进入时会按你的编号生成专属地形。解锁后永久拥有。当前福币 <b id="terrain-coins">${user.coins}</b></p>
      <div class="terrains" id="terrain-list">${cards(user)}</div>
      <p class="error-line form-error" role="alert" hidden></p>`,
     { wide: true },
