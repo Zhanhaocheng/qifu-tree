@@ -1,0 +1,32 @@
+# Apache：把 /api/* 交给 index.php；保护配置与内部文件
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # 部分 FastCGI/CGI 环境会丢掉 Authorization 头，这里补上
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # 内部目录、配置、SQL 一律不允许直接访问
+  RewriteRule ^(lib/|config\.php$|config\.sample\.php$|.*\.sql$|\.htaccess$) - [F,L]
+
+  # 其它不存在的文件/目录 -> index.php（保留查询串）
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+<IfModule mod_setenvif.c>
+  SetEnvIfNoCase Authorization "(.+)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
+# 没有 mod_rewrite 时（或规则不生效），下面的指令仍然能挡住敏感文件
+<FilesMatch "^(config\.php|config\.sample\.php|\.htaccess)$|\.sql$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+Options -Indexes
