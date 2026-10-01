@@ -46,6 +46,18 @@ vercel --prod
 
 可选环境变量：`APP_TZ`（签到日期的时区，默认 `Asia/Shanghai`）。
 
+## 内置测试账号
+
+每次启动（含 Vercel 冷启动、演示模式内存重置、本地 SQLite、Turso）都会幂等地确保下面的账号存在，登录时也会再次校验：
+
+| 项 | 默认值 | 环境变量 |
+| --- | --- | --- |
+| 用户名 | `qifu_test` | `TEST_ACCOUNT_USER` |
+| 密码 | `Qifu@Test2026` | `TEST_ACCOUNT_PASSWORD` |
+| 关闭 | 默认开启 | `TEST_ACCOUNT_DISABLED=1` |
+
+该账号能量与福币约为 999,999,999：祈福、解锁/切换地形都不会扣除（也不会低于该值），密码或余额被改动后会在下次启动/登录时恢复。其他用户不受影响。正式上线对外开放时，请设置 `TEST_ACCOUNT_PASSWORD` 为私密值，或设置 `TEST_ACCOUNT_DISABLED=1`。
+
 ## 部署为容器（备选）
 
 ```bash

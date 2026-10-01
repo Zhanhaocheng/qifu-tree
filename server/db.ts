@@ -1,6 +1,7 @@
 import { createClient, type Client, type InArgs, type Transaction } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ensureTestAccount, testAccountFromEnv } from './testAccount.js';
 
 export type DbMode = 'local' | 'turso' | 'demo';
 
@@ -107,9 +108,11 @@ export function memoryDb() {
  * - 运行在 Vercel 且没有数据库：内存演示模式（数据会丢失）
  * - 否则：本地 SQLite 文件（DATA_DIR，默认 ./data）
  */
-export function openDbFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<Db> {
-  if (env.TURSO_DATABASE_URL) return createDb(env.TURSO_DATABASE_URL, 'turso', env.TURSO_AUTH_TOKEN);
-  if (env.VERCEL || env.DEMO_MODE === '1') return memoryDb();
-  const dir = env.DATA_DIR ?? path.resolve('data');
-  return createDb(`file:${path.join(dir, 'qifu.db')}`, 'local');
+export async function openDbFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<Db> {
+  let db: Db;
+  if (env.TURSO_DATABASE_URL) db = await createDb(env.TURSO_DATABASE_URL, 'turso', env.TURSO_AUTH_TOKEN);
+  else if (env.VERCEL || env.DEMO_MODE === '1') db = await memoryDb();
+  else db = await createDb(`file:${path.join(env.DATA_DIR ?? path.resolve('data'), 'qifu.db')}`, 'local');
+  await ensureTestAccount(db, testAccountFromEnv(env));
+  return db;
 }

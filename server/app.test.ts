@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from './app.js';
 import { memoryDb } from './db.js';
+import { testAccountFromEnv } from './testAccount.js';
 
 function setup() {
   let t = Date.parse('2026-01-10T04:00:00Z');
@@ -88,4 +89,80 @@ test('terrain is assigned at signup; switching costs coins once', async () => {
   const back = await s.call('POST', '/api/terrain', { terrain: first });
   assert.equal(back.json.spent, 0);
   assert.equal(back.json.user.coins, 30);
+});
+
+const TEST_CFG = { username: 'qifu_test', password: 'Qifu@Test2026' };
+
+function appWith(testAccount: typeof TEST_CFG | null, db: ReturnType<typeof memoryDb> | Awaited<ReturnType<typeof memoryDb>> = memoryDb()) {
+  const app = createApp({ db, testAccount });
+  let cookie = '';
+  const call = async (method: string, url: string, payload?: unknown) => {
+    const res = await app.request(url, {
+      method,
+      headers: { 'content-type': 'application/json', cookie },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    return { status: res.status, json: (await res.json()) as any };
+  };
+  return { call, db };
+}
+
+test('built-in test account has unlimited energy and coins', async () => {
+  const s = appWith(TEST_CFG);
+  const login = await s.call('POST', '/api/login', TEST_CFG);
+  assert.equal(login.status, 200);
+  const e0 = login.json.user.energy as number;
+  const c0 = login.json.user.coins as number;
+  assert.ok(e0 >= 999_999_999 && c0 >= 999_999_999);
+
+  for (const item of ['lotus', 'lantern', 'wood']) {
+    const p = await s.call('POST', '/api/pray', { item, text: '愿' });
+    assert.equal(p.status, 200);
+    assert.ok(p.json.user.energy >= e0 && p.json.user.coins >= c0);
+  }
+
+  const first = login.json.user.terrain as string;
+  const other = first === 'snow' ? 'desert' : 'snow';
+  const sw = await s.call('POST', '/api/terrain', { terrain: other });
+  assert.equal(sw.status, 200);
+  assert.equal(sw.json.user.terrain, other);
+  assert.equal(sw.json.spent, 0);
+  assert.ok(sw.json.user.coins >= c0);
+});
+
+test('test account is ensured on cold start, restored when drained, and works across instances', async () => {
+  const db = await memoryDb();
+  const a = appWith(TEST_CFG, db);
+  assert.equal((await a.call('GET', '/api/me')).status, 200);
+  assert.ok(await db.get('SELECT 1 FROM users WHERE username = ?', [TEST_CFG.username]));
+
+  await db.run('UPDATE users SET energy = 1, coins = 0, password_hash = ? WHERE username = ?', ['bogus', TEST_CFG.username]);
+  const b = appWith(TEST_CFG, db);
+  const login = await b.call('POST', '/api/login', TEST_CFG);
+  assert.equal(login.status, 200);
+  assert.ok(login.json.user.energy >= 999_999_999 && login.json.user.coins >= 999_999_999);
+  assert.equal((await b.call('POST', '/api/login', { ...TEST_CFG, password: 'wrong-pass' })).status, 401);
+  const rows = await db.all('SELECT id FROM users WHERE username = ?', [TEST_CFG.username]);
+  assert.equal(rows.length, 1);
+});
+
+test('test account can be disabled or customised', async () => {
+  const off = appWith(null);
+  assert.equal((await off.call('POST', '/api/login', TEST_CFG)).status, 401);
+
+  const custom = appWith({ username: 'demo_user', password: 'Another#Pass1' });
+  assert.equal((await custom.call('POST', '/api/login', TEST_CFG)).status, 401);
+  assert.equal((await custom.call('POST', '/api/login', { username: 'demo_user', password: 'Another#Pass1' })).status, 200);
+
+  assert.equal(testAccountFromEnv({})?.username, 'qifu_test');
+  assert.equal(testAccountFromEnv({ TEST_ACCOUNT_DISABLED: '1' }), null);
+  assert.deepEqual(testAccountFromEnv({ TEST_ACCOUNT_USER: 'u1', TEST_ACCOUNT_PASSWORD: 'p1' }), { username: 'u1', password: 'p1' });
+});
+
+test('regular users are still charged', async () => {
+  const s = appWith(TEST_CFG);
+  await s.call('POST', '/api/register', { username: 'normal', password: '123456' });
+  assert.equal((await s.call('POST', '/api/pray', { item: 'lotus', text: '愿' })).status, 402);
 });

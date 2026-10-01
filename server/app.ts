@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Db, Exec } from './db.js';
+import { UNLIMITED_BALANCE, ensureTestAccount, isTestAccount, testAccountFromEnv, type TestAccountConfig } from './testAccount.js';
 import {
   ITEMS,
   MAX_WISH_LENGTH,
@@ -37,13 +38,17 @@ export interface AppOptions {
   db: Db | Promise<Db>;
   timeZone?: string;
   now?: () => number;
+  testAccount?: TestAccountConfig | null;
 }
 
-export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now }: AppOptions) {
+export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now, testAccount = testAccountFromEnv() }: AppOptions) {
   const app = new Hono();
   let db!: Db;
   app.use('*', async (_c, next) => {
-    db ??= await dbInput;
+    if (!db) {
+      db = await dbInput;
+      await ensureTestAccount(db, testAccount, now);
+    }
     await next();
   });
 
@@ -173,6 +178,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     const password = typeof b.password === 'string' ? b.password : '';
     const key = `login:${clientIp(c)}:${username.toLowerCase()}`;
     if (throttled(key)) return fail(c, '尝试次数过多，请 10 分钟后再试', 429);
+    if (isTestAccount(testAccount, username)) await ensureTestAccount(db, testAccount, now);
     const u = await db.get<UserRow>('SELECT * FROM users WHERE username = ?', [username]);
     const ok = u ? await bcrypt.compare(password, u.password_hash) : false;
     if (!u || !ok) {
@@ -233,10 +239,13 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     const res = await db.tx(async (t) => {
       const fresh = (await getUser(u.id, t))!;
       const balance = item.currency === 'energy' ? fresh.energy : fresh.coins;
-      if (balance < item.cost) {
+      const unlimited = isTestAccount(testAccount, fresh.username);
+      if (!unlimited && balance < item.cost) {
         return { error: item.currency === 'energy' ? '能量不足，去签到或使用福币道具吧' : '福币不足，请先充值' };
       }
-      if (item.currency === 'energy') {
+      if (unlimited) {
+        await t.run('UPDATE users SET energy = MAX(energy, ?), coins = MAX(coins, ?) WHERE id = ?', [UNLIMITED_BALANCE, UNLIMITED_BALANCE, u.id]);
+      } else if (item.currency === 'energy') {
         await t.run('UPDATE users SET energy = energy - ? + ? WHERE id = ?', [item.cost, item.reward, u.id]);
       } else {
         await t.run('UPDATE users SET coins = coins - ?, energy = energy + ? WHERE id = ?', [item.cost, item.reward, u.id]);
@@ -274,10 +283,11 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       const owned = await t.get('SELECT 1 FROM user_terrains WHERE user_id = ? AND terrain = ?', [u.id, def.id]);
       let spent = 0;
       if (!owned) {
-        if (fresh.coins < def.price) return { error: '福币不足，请先充值' };
-        await t.run('UPDATE users SET coins = coins - ? WHERE id = ?', [def.price, u.id]);
+        const unlimited = isTestAccount(testAccount, fresh.username);
+        if (!unlimited && fresh.coins < def.price) return { error: '福币不足，请先充值' };
+        if (!unlimited) await t.run('UPDATE users SET coins = coins - ? WHERE id = ?', [def.price, u.id]);
         await t.run('INSERT INTO user_terrains (user_id, terrain) VALUES (?, ?)', [u.id, def.id]);
-        spent = def.price;
+        spent = unlimited ? 0 : def.price;
       }
       await t.run('UPDATE users SET terrain = ? WHERE id = ?', [def.id, u.id]);
       return { spent };
