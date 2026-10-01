@@ -12,20 +12,19 @@ Vercel/Node 版保持原样，随时可以回退（见第 9 节）。
 | `qifu-php-site.zip` | 上传包：`index.html`、`assets/`、`api/`、`schema.sql` |
 | `php-import.sql` | 从 Turso 导出的现有数据（用户、祈福、充值、会话）。**含密码哈希，属敏感数据** |
 | `qifu-frontend-query-style.zip` | 备用前端：主机不支持 URL 重写时用（第 8.2 节） |
-| FTP 账号 | 景安给你的 FTP 地址、账号、密码；网站目录通常叫 `WEB`（或 `wwwroot`） |
+| FTP 账号 | 景安给你的 FTP 地址、账号、密码；网站目录通常叫 `WEB`（景安实测路径形如 `/www/users/<FTP账号>/WEB/`） |
 | MySQL 信息 | 面板里的数据库地址、库名、用户名、密码 |
 
 ## 1. 准备数据库
 
 在景安控制面板的「数据库」里确认已有一个 **空的** MySQL 库（库名、用户名、密码都记下来）。
 
-数据库地址有两种：
+数据库地址：
 
-- **外网地址**（形如 `2295.dnstoo.com`）：给你电脑上的 Navicat / 命令行远程连接用，通常要先在面板里放行你的出口 IP。
-- **主机内部连接**：网站上线后，PHP 和 MySQL 在景安机房内部。`config.php` 里的 `DB_HOST` 依次试：
-  1. `localhost`
-  2. 面板写的「内网地址 / 数据库服务器」
-  3. 外网地址（也能用，只是更慢）
+- **景安实测**：`DB_HOST` 填面板里的数据库地址（外网地址，形如 `2295.dnstoo.com`，端口 3306），主机里的 PHP 可以直接连。
+  **不要填 `localhost`**：它走本机 socket，景安主机上没有，会报 `No such file or directory`。
+- 同一个外网地址也可以给你电脑上的 Navicat / 命令行远程连接用，通常要先在面板里放行你的出口 IP。
+- 其它主机：先试 `localhost`，再试面板里的「内网地址」。
 
 本项目的表结构已在真实的 **MySQL 5.6.51**（`innodb_large_prefix=OFF`，即最严格的索引长度限制）上验证过：不使用 JSON 类型、窗口函数、CTE、生成列，所有唯一索引都在 767 字节以内。
 
@@ -35,7 +34,7 @@ Vercel/Node 版保持原样，随时可以回退（见第 9 节）。
 2. 把 `api/config.sample.php` 复制一份，改名 `api/config.php`，用记事本（UTF-8，无 BOM）填：
 
    ```php
-   'DB_HOST' => 'localhost',        // 见第 1 节
+   'DB_HOST' => '面板里的数据库地址，如 2295.dnstoo.com',   // 景安不要填 localhost，见第 1 节
    'DB_PORT' => 3306,
    'DB_NAME' => '你的库名',
    'DB_USER' => '你的数据库用户名',
@@ -88,6 +87,7 @@ config.php 存在  OK
 
 再打开 `http://qifu.laixi.cn/api/diag.php?key=你的INSTALL_SECRET`，会多出「数据库连接 OK / MySQL 版本 5.6.x」。
 
+- 页面还会列出 `disable_functions` 和「不可用的可选函数」。共享主机常禁用 `set_time_limit`、`ini_set`、`putenv` 等，程序对这些都做了兼容，**不会因此报错**。
 - PHP 版本需要 7.4 以上（推荐 8.1）。在景安面板「PHP 版本」里选 8.x。
 - `pdo_mysql` 缺失：在面板里开启 PDO MySQL / 联系客服。
 - 数据库连接失败：看第 1 节换 `DB_HOST`，或看第 10 节。
@@ -168,12 +168,13 @@ PHP 版不会动 Vercel/Turso 的任何数据。回滚只需要：
 | 接口 500，`{"error":"服务器开小差了，请稍后再试"}` | 打开 `config.php` 临时设 `'DEBUG' => true`，再访问 `/api/prayers`，响应里的 `detail` 会写原因（用完改回 `false`）。常见原因：`DB_HOST`/账号错误、没运行 install.php（表不存在）、PHP 缺 `pdo_mysql`。服务器的 PHP 错误日志可在景安面板里查看。 |
 | `/api/xxx` 返回 404 页面/HTML | 重写没生效 → 第 8.2 节。Apache 主机确认允许 `.htaccess`；IIS 主机确认有 `web.config` 且启用了 URL Rewrite。 |
 | IIS 上出现 500.19 / 500.50 | `web.config` 里的 `<security>` 段被主机锁定：删掉整个 `<security>...</security>` 再试（`config.php` 本身无输出，仍然安全）；或直接用查询风格。 |
-| `DB 连接失败 / Connection refused / Access denied` | 换 `DB_HOST`（`localhost` / 内网地址 / 外网地址）；确认库名、用户名带全；密码里有特殊字符时不要多加引号。 |
+| `DB 连接失败 / No such file or directory / Connection refused / Access denied` | `DB_HOST` 不要用 `localhost`（景安没有本机 socket），改成面板的外网地址；确认库名、用户名带全；密码里有特殊字符时不要多加引号。 |
 | 数据库报 `Specified key was too long` | 本项目已避免（所有唯一索引 ≤ 767 字节）。若你自己改过表，请保持 `username_key` 等为 `VARCHAR(64)` 以内。 |
 | 中文乱码 | `config.php`、`schema.sql` 必须是 UTF-8；表都是 `utf8mb4`。FTP 请用二进制模式。 |
 | 登录后刷新又掉线 | 浏览器禁用 Cookie，或前端和接口不同域（此时前端需用 `VITE_API_BASE` 构建，走 Bearer 令牌，并在 `ALLOWED_ORIGINS` 里加入前端域名）。 |
 | 一直提示「操作过于频繁 / 尝试次数过多」 | 命中限流（同 IP 10 分钟内）。等待 10 分钟，或在数据库里 `DELETE FROM rate_limits`。 |
 | 前端提示「请求超时」 | 前端 12 秒超时；GET 请求会自动重试 2 次，POST（登录/注册/祈福）不会重试。注册超时后请先用同账号「登录」确认是否已成功。 |
+| `Call to undefined function xxx()` | 该函数被主机的 `disable_functions` 禁用。最新版已对所有可选函数做了兼容；请确认上传的是最新版文件，并用 `diag.php` 查看被禁用的函数列表，把结果反馈给我们。 |
 | `install.php` 报 403 | 口令不对，或 `config.php` 里 `INSTALL_SECRET` 少于 12 位。 |
 | 看不到 `.htaccess` | FTP 客户端要开启「显示隐藏文件」。 |
 | `Authorization` 头收不到 | `.htaccess` 已包含修复规则；诊断页会显示。同域 Cookie 登录不依赖它，只有跨域 Bearer 才需要。 |

@@ -449,6 +449,7 @@ function q_dispatch(): void
     }
     $handler = $routes[$method . ' ' . q_route_path()] ?? null;
     if ($handler === null) {
+        q_discard_output();
         http_response_code(404);
         header('Content-Type: text/plain; charset=UTF-8');
         echo '404 Not Found';

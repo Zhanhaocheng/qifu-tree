@@ -21,7 +21,7 @@ foreach($p->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN) as $t){$p->exec("D
 for p in $NODE_PORT $PHP_PORT; do if (echo > /dev/tcp/127.0.0.1/$p) 2>/dev/null; then echo "port $p is busy; stop the old test servers first"; exit 1; fi; done
 PORT=$NODE_PORT node --import tsx scripts/parity/node-server.ts > /tmp/parity-node.log 2>&1 &
 NODE_PID=$!
-php -S 127.0.0.1:$PHP_PORT -t php-backend scripts/parity/router.php > /tmp/parity-php.log 2>&1 &
+php ${PHP_DISABLE_FUNCTIONS:+-d disable_functions=$PHP_DISABLE_FUNCTIONS} -S 127.0.0.1:$PHP_PORT -t php-backend scripts/parity/router.php > /tmp/parity-php.log 2>&1 &
 PHP_PID=$!
 trap 'kill $NODE_PID $PHP_PID 2>/dev/null || true; pkill -P $NODE_PID 2>/dev/null || true' EXIT
 for i in $(seq 1 60); do curl -sf localhost:$NODE_PORT/api/config >/dev/null && curl -s -o /dev/null localhost:$PHP_PORT/api/config && break; sleep 0.5; done

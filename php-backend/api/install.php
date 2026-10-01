@@ -2,14 +2,14 @@
 // 一次性安装脚本：建表 -> （可选）导入 import.sql -> 保证测试账号存在。
 // 需要 config.php 中的 INSTALL_SECRET。用完后请务必从服务器删除 install.php、diag.php 和 import.sql。
 define('QIFU', 1);
-error_reporting(E_ALL);
-ini_set('display_errors', '0');
-@set_time_limit(300);
+require __DIR__ . '/lib/core.php';
+q_harden_runtime();
+q_call('set_time_limit', 300);
+q_call('ignore_user_abort', true);
 header('Content-Type: text/html; charset=UTF-8');
 header('Cache-Control: no-store');
 header('X-Robots-Tag: noindex');
 
-require __DIR__ . '/lib/core.php';
 require __DIR__ . '/lib/db.php';
 require __DIR__ . '/lib/game.php';
 require __DIR__ . '/lib/app.php';
@@ -36,7 +36,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 }
 
 if (!hash_equals($secret, (string) ($_POST['key'] ?? ''))) {
-    sleep(2);
+    q_sleep_ms(2000);
     http_response_code(403);
     page('祈福树安装', '<p class="bad">口令不正确。</p>');
 }
@@ -68,10 +68,10 @@ try {
         $log[] = "users 表已有 $users 行，为避免覆盖，跳过数据导入";
     } else {
         $count = 0;
+        $lines = preg_split('/\r\n|\n|\r/', (string) file_get_contents($importFile));
         $pdo->beginTransaction();
         try {
-            $fh = fopen($importFile, 'rb');
-            while (($line = fgets($fh)) !== false) {
+            foreach ($lines as $line) {
                 $line = trim($line);
                 if ($line === '' || strpos($line, '--') === 0) {
                     continue;
@@ -82,7 +82,6 @@ try {
                 $pdo->exec($line);
                 $count++;
             }
-            fclose($fh);
             $pdo->commit();
             $log[] = "import.sql 导入完成（$count 条语句，单事务）";
         } catch (Throwable $e) {
@@ -101,8 +100,11 @@ try {
     }
 } catch (Throwable $e) {
     $failed = true;
-    error_log('[qifu-install] ' . $e->getMessage());
+    q_log('install: ' . $e->getMessage());
     $log[] = '出错：' . $e->getMessage();
+    if (strpos($e->getMessage(), 'No such file') !== false || strpos($e->getMessage(), '[2002]') !== false) {
+        $log[] = '提示：DB_HOST 为 localhost 时 PHP 会走本机 socket，很多虚拟主机没有；请改成面板里的数据库地址（例如 xxxx.dnstoo.com）。';
+    }
 }
 
 $body = '<ul>' . implode('', array_map(static function ($l) { return '<li>' . h($l) . '</li>'; }, $log)) . '</ul>';

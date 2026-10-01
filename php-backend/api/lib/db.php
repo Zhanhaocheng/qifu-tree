@@ -7,6 +7,9 @@ function q_pdo(): PDO
     if ($pdo !== null) {
         return $pdo;
     }
+    if (!class_exists('PDO') || !in_array('mysql', PDO::getAvailableDrivers(), true)) {
+        throw new RuntimeException('服务器 PHP 没有启用 pdo_mysql 扩展');
+    }
     $name = (string) q_cfg('DB_NAME', '');
     if ($name === '') {
         throw new RuntimeException('数据库未配置：找不到 api/config.php 或 DB_NAME 为空');
@@ -69,7 +72,7 @@ function q_tx(callable $fn)
             }
             $code = $e instanceof PDOException ? ($e->errorInfo[1] ?? 0) : 0;
             if (($code === 1213 || $code === 1205) && $try < 3) {
-                usleep(50000 * $try);
+                q_sleep_ms(50 * $try);
                 continue;
             }
             throw $e;
