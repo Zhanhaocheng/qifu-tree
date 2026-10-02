@@ -82,6 +82,28 @@ return [
     // 访问支付宝网关时校验 HTTPS 证书。只有主机 CA 证书过旧导致无法联网时才临时改 false（响应仍会用支付宝公钥验签）
     'ALIPAY_SSL_VERIFY' => true,
 
+    // ---- 手机短信验证码登录（美联软通 5C，http://www.5c.com.cn/）----
+    // 机密：只写在服务器 config.php 里，不要提交到 Git。全部留空且 SMS_MOCK 为 false = 短信登录功能自动隐藏。
+    'SMS_USERNAME' => '',             // 平台用户名
+    'SMS_PASSWORD_MD5' => '',         // 32 位 MD5 密码（大小写均可，发送时统一转小写）
+    'SMS_APIKEY' => '',               // 平台后台「账号管理 -> 我的信息」里的 apikey
+    'SMS_SIGN' => '【阳光互联】',      // 签名，会放在短信内容开头
+    // 短信全文模板：{sign} 签名、{code} 验证码、{minutes} 有效分钟数。默认见 sms_sender.php
+    // 'SMS_TEMPLATE' => '{sign}您的验证码是{code}，{minutes}分钟内有效。',
+    // 接口地址，默认 HTTPS。如果主机的 CA 证书过旧连不上，可改成 http://m.5c.com.cn/api/send/index.php（会明文传输凭据，不推荐）
+    // 'SMS_API_URL' => 'https://m.5c.com.cn/api/send/index.php',
+    // mock 开关（默认 false）：true 时不联网、不真实发短信，只把短信写到 SMS_MOCK_OUTBOX 文件（或 error_log）。只用于开发/测试，线上务必保持 false。
+    'SMS_MOCK' => false,
+    'SMS_MOCK_OUTBOX' => '',
+    // 总开关；设为 false 可随时关闭短信登录
+    'SMS_ENABLED' => true,
+    // 限额（滚动 24 小时）：同手机号 / 同 IP / 全站。同手机号 60 秒内只能发一次（固定）。
+    'SMS_PHONE_DAILY_LIMIT' => 10,
+    'SMS_IP_DAILY_LIMIT' => 30,
+    'SMS_TOTAL_DAILY_LIMIT' => 3000,
+    // 验证码哈希密钥（可选，留空则由数据库口令派生）
+    'SMS_CODE_SECRET' => '',
+
     // true 时 500 错误会在 JSON 的 detail 字段里带上原因，排障用，排完请改回 false
     'DEBUG' => false,
 ];

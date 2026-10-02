@@ -4,6 +4,8 @@ import { cors } from 'hono/cors';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { Db, Exec } from './db.js';
+import { smsFromEnv, type SmsRuntime } from './sms.js';
+import { registerSmsRoutes } from './smsRoutes.js';
 import { UNLIMITED_BALANCE, ensureTestAccount, isTestAccount, testAccountFromEnv, type TestAccountConfig } from './testAccount.js';
 import {
   ITEMS,
@@ -60,9 +62,10 @@ export interface AppOptions {
   now?: () => number;
   testAccount?: TestAccountConfig | null;
   allowedOrigins?: string[];
+  sms?: SmsRuntime;
 }
 
-export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now, testAccount = testAccountFromEnv(), allowedOrigins = allowedOriginsFromEnv() }: AppOptions) {
+export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.now, testAccount = testAccountFromEnv(), allowedOrigins = allowedOriginsFromEnv(), sms = smsFromEnv() }: AppOptions) {
   const app = new Hono();
   const origins = new Set(allowedOrigins);
 
@@ -385,6 +388,20 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       mine: me?.id === r.user_id,
     }));
     return c.json({ tags, total, recent24h: recent });
+  });
+
+  registerSmsRoutes(app, {
+    db: () => db,
+    sms,
+    now,
+    body,
+    clientIp,
+    currentUser,
+    startSession,
+    publicUser: async (id) => toPublic((await getUser(id))!),
+    throttled,
+    noteFailure,
+    clearFailures: (key) => failures.delete(key),
   });
 
   app.onError((err, c) => {
