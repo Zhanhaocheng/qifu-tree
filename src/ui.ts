@@ -334,6 +334,7 @@ export interface ShopPay {
   mode: 'demo' | 'alipay';
   ready: boolean;
   sandbox: boolean;
+  testPrices?: boolean;
 }
 
 export interface QrPanel {
@@ -367,9 +368,10 @@ export function openShop(
       : pay!.sandbox
         ? '支付宝沙箱测试环境：使用沙箱买家账号付款，不会产生真实扣款。'
         : '使用支付宝安全支付，付款成功后福币自动到账。手机会直接拉起支付宝，电脑请扫码。';
+  const testNotice = real && pay!.ready && pay!.testPrices ? '<div class="notice">测试价：当前为联调阶段，实付金额仅 ¥0.01 / ¥0.02 / ¥0.03，福币数量不变。</div>' : '';
   const d = openDialog(
     '福币商店',
-    `<div class="notice">${notice}</div>
+    `<div class="notice">${notice}</div>${testNotice}
      <p class="balance">当前福币 <b id="shop-coins" data-v="${user.coins}">${user.coins}</b></p>
      <div class="packs">${packs
        .map(

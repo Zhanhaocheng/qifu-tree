@@ -21,6 +21,8 @@ const APP_ID = '2021000000000001';
 const PORT_SITE = 47381;
 const PORT_DEMO = 47382;
 const PORT_GW = 47383;
+const PORT_TEST = 47385;
+const TESTP = `http://127.0.0.1:${PORT_TEST}`;
 const SITE = `http://127.0.0.1:${PORT_SITE}`;
 const DEMO = `http://127.0.0.1:${PORT_DEMO}`;
 const NOTIFY_URL = 'http://qifu.laixi.cn/api/index.php?path=/pay/alipay/notify';
@@ -156,12 +158,15 @@ before(async () => {
   // 主站点：密钥用「去掉头尾的裸 base64」格式，顺带验证格式兼容；notify/return 不写，验证默认值
   const siteDir = makeSite('site', { ...common, ALIPAY_PRIVATE_KEY: rawB64(appKeys.privateKey), ALIPAY_PUBLIC_KEY: rawB64(aliKeys.publicKey) });
   const demoDir = makeSite('demo', {});
+  const testDir = makeSite('testprice', { ...common, ALIPAY_PRIVATE_KEY: appKeys.privateKey, ALIPAY_PUBLIC_KEY: aliKeys.publicKey, PAY_TEST_PRICES: true });
   // 先清库再安装
   execFileSync('php', ['-r', `$p=new PDO("mysql:host=".getenv("QIFU_DB_HOST").";port=".(getenv("QIFU_DB_PORT")?:3306).";dbname=".getenv("QIFU_DB_NAME").";charset=utf8mb4",getenv("QIFU_DB_USER"),getenv("QIFU_DB_PASS"));$p->exec("SET FOREIGN_KEY_CHECKS=0");foreach($p->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN) as $t){$p->exec("DROP TABLE \`$t\`");}`], { env: { ...env, QIFU_DB_HOST: env.QIFU_DB_HOST ?? '127.0.0.1' } });
   startPhp(siteDir, PORT_SITE);
   startPhp(demoDir, PORT_DEMO);
+  startPhp(testDir, PORT_TEST);
   await waitUp(`${SITE}/api/index.php?path=/config`);
   await waitUp(`${DEMO}/api/index.php?path=/config`);
+  await waitUp(`${TESTP}/api/index.php?path=/config`);
   const inst = await fetch(`${SITE}/api/install.php`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `key=${INSTALL_SECRET}` });
   assert.ok((await inst.text()).includes('安装完成'));
 });
@@ -175,7 +180,7 @@ after(async () => {
 /* ------------------------------------------------------------------- tests */
 test('install.php 建好 pay_orders，且 /pay/info 报告支付宝模式', async () => {
   const r = await call(SITE, 'GET', '/pay/info');
-  assert.deepEqual(r.json, { mode: 'alipay', ready: true, sandbox: false, pcMode: 'qr' });
+  assert.deepEqual(r.json, { mode: 'alipay', ready: true, sandbox: false, pcMode: 'qr', testPrices: false });
 });
 
 test('未配置支付宝：保留模拟充值，真实支付接口不可用', async () => {
@@ -449,3 +454,58 @@ test('topups 流水：每笔真实支付恰好一条', async () => {
   assert.equal(dupTrade, 0);
 });
 
+
+/* ------------------------------------------------------ 测试价开关 PAY_TEST_PRICES */
+const pricesOf = (r) => r.json.packs.map((p) => [p.id, p.price, p.coins]);
+
+test('PAY_TEST_PRICES 默认关闭：/config 与 /pay/info 是正式价 6/30/98', async () => {
+  assert.deepEqual(pricesOf(await call(SITE, 'GET', '/config')), [['p6', 6, 60], ['p30', 30, 330], ['p98', 98, 1180]]);
+  assert.equal((await call(SITE, 'GET', '/pay/info')).json.testPrices, false);
+});
+
+test('PAY_TEST_PRICES 开启：/config 价格变为 0.01/0.02/0.03，福币数量不变', async () => {
+  assert.deepEqual(pricesOf(await call(TESTP, 'GET', '/config')), [['p6', 0.01, 60], ['p30', 0.02, 330], ['p98', 0.03, 1180]]);
+  assert.equal((await call(TESTP, 'GET', '/pay/info')).json.testPrices, true);
+});
+
+test('测试价：下单金额（wap 表单 / precreate）用测试价，订单金额以分记', async () => {
+  const u = await newUser(TESTP);
+  const mk = (pack, device) => call(TESTP, 'POST', '/pay/alipay/create', { body: { pack, device }, jar: u.jar });
+  const expect = { p6: '0.01', p30: '0.02', p98: '0.03' };
+  for (const pack of Object.keys(expect)) {
+    const w = await mk(pack, 'mobile');
+    assert.equal(w.status, 200, w.text);
+    assert.equal(JSON.parse(w.json.form.fields.biz_content).total_amount, expect[pack]);
+    assert.equal(w.json.amount, expect[pack]);
+  }
+  const before = gwRequests.length;
+  const q = await mk('p30', 'desktop');
+  assert.equal(q.status, 200, q.text);
+  const req = gwRequests.slice(before).find((x) => x.method === 'alipay.trade.precreate');
+  assert.equal(JSON.parse(req.biz_content).total_amount, '0.02');
+});
+
+test('测试价：notify 金额按测试价核对 —— 正式价金额被拒，0.03 才入账（福币仍是 1180）', async () => {
+  const u = await newUser(TESTP);
+  const { json: o } = await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p98', device: 'desktop' }, jar: u.jar });
+  const post = (p) => call(TESTP, 'POST', '/pay/alipay/notify', { form: p });
+  const coins = async () => (await call(TESTP, 'GET', '/me', { jar: u.jar })).json.user.coins;
+  assert.equal((await post(payNotify(o.orderNo, { total_amount: '98.00' }))).text, 'fail');
+  assert.equal((await post(payNotify(o.orderNo, { total_amount: '0.02' }))).text, 'fail');
+  assert.equal(await coins(), 0);
+  assert.equal((await post(payNotify(o.orderNo, { total_amount: '0.03' }))).text, 'success');
+  assert.equal(await coins(), 1180);
+  assert.equal((await post(payNotify(o.orderNo, { total_amount: '0.03' }))).text, 'success');
+  assert.equal(await coins(), 1180);
+});
+
+test('测试价：查单补单同样按测试价核对金额', async () => {
+  const u = await newUser(TESTP);
+  const a = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p6', device: 'desktop' }, jar: u.jar })).json;
+  const b = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p30', device: 'desktop' }, jar: u.jar })).json;
+  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '6.00', tradeNo: 'T_TP_A' }); // 金额是正式价 -> 拒绝
+  gwOrders.set(b.orderNo, { status: 'TRADE_SUCCESS', amount: '0.02', tradeNo: 'T_TP_B' });
+  const r = await call(TESTP, 'POST', '/pay/alipay/recheck', { jar: u.jar });
+  assert.deepEqual(r.json.paid.map((x) => x.orderNo), [b.orderNo]);
+  assert.equal(r.json.user.coins, 330);
+});

@@ -147,6 +147,8 @@ export interface PayInfo {
   sandbox: boolean;
   /** 电脑端：qr = 页面内扫码；page = 跳转支付宝收银台 */
   pcMode: 'qr' | 'page';
+  /** 测试价开关（PAY_TEST_PRICES）：档位实付金额临时为 0.01 / 0.02 / 0.03 元 */
+  testPrices?: boolean;
 }
 
 export interface PayCreateResponse {

@@ -19,11 +19,26 @@ function q_items(): array
 
 function q_packs(): array
 {
-    return [
+    $packs = [
         ['id' => 'p6', 'coins' => 60, 'price' => 6, 'label' => '小福包'],
         ['id' => 'p30', 'coins' => 330, 'price' => 30, 'label' => '中福包'],
         ['id' => 'p98', 'coins' => 1180, 'price' => 98, 'label' => '大福包'],
     ];
+    if (q_cfg_bool('PAY_TEST_PRICES')) {
+        // 真实支付联调用的临时价（分），福币数量不变。下单、/config、前端显示都读这里
+        $testCents = ['p6' => 1, 'p30' => 2, 'p98' => 3];
+        foreach ($packs as &$p) {
+            $p['price'] = $testCents[$p['id']] / 100;
+        }
+        unset($p);
+    }
+    return $packs;
+}
+
+/** 档位的实付金额（分）；price 可能是整数元或测试价的小数元 */
+function q_pack_cents(array $pack): int
+{
+    return (int) round($pack['price'] * 100);
 }
 
 function q_terrains(): array

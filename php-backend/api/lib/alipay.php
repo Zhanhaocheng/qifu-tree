@@ -716,6 +716,7 @@ function h_pay_info()
         'ready' => $mode === 'alipay' ? q_pay_ready() : true,
         'sandbox' => q_cfg_bool('ALIPAY_SANDBOX'),
         'pcMode' => q_ali_pc_mode(),
+        'testPrices' => q_cfg_bool('PAY_TEST_PRICES'),
     ]);
 }
 
@@ -767,7 +768,7 @@ function h_pay_create()
     }
 
     $no = q_pay_new_order_no();
-    $cents = (int) $pack['price'] * 100;
+    $cents = q_pack_cents($pack);
     q_run(
         'INSERT INTO pay_orders (out_trade_no, user_id, pack_id, coins, amount_cents, channel, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [$no, $id, $pack['id'], (int) $pack['coins'], $cents, $channel, 'pending', q_now()]
