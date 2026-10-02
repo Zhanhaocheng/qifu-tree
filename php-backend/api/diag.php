@@ -2,6 +2,7 @@
 // 只读诊断页（不使用 phpinfo）。排障完成后请删除本文件。
 define('QIFU', 1);
 require __DIR__ . '/lib/core.php';
+require __DIR__ . '/lib/alipay.php';
 q_harden_runtime();
 header('Content-Type: text/plain; charset=UTF-8');
 header('Cache-Control: no-store');
@@ -37,6 +38,22 @@ $line('解析出的 API 路径', q_route_path());
 $line('收到 Authorization 头', q_header('authorization') !== '' ? '是（令牌可用）' : '否（用 curl -H "Authorization: Bearer x" 测试；同域 Cookie 登录不受影响）');
 $line('HTTPS', q_is_https() ? '是' : '否');
 
+echo "\n== 支付宝 ==\n";
+$line('openssl 扩展', $yn(extension_loaded('openssl') && q_fn('openssl_sign')));
+$line('curl 扩展', extension_loaded('curl') && q_fn('curl_init') ? 'OK' : '缺失（改用 stream；需要 allow_url_fopen）');
+$line('allow_url_fopen', q_call('ini_get', 'allow_url_fopen') ? 'On' : 'Off');
+$line('支付模式', q_pay_mode() === 'demo' ? '模拟充值（未配置支付宝）' : '支付宝' . (q_cfg_bool('ALIPAY_SANDBOX') ? '（沙箱）' : '（正式）') . (q_ali_cert_mode() ? ' / 证书模式' : ' / 密钥模式'));
+if (q_pay_mode() === 'alipay') {
+    $problems = q_ali_problems();
+    $line('支付配置', $problems ? '有问题' : 'OK');
+    foreach ($problems as $pr) {
+        echo "  - $pr\n";
+    }
+    $line('网关', q_ali_gateway());
+    $line('notify 地址', q_ali_notify_url());
+    $line('return 地址', q_ali_return_url());
+}
+
 echo "\n路由测试：访问 /api/config 应返回 JSON；若返回 404 页面或 HTML，说明重写未生效，\n";
 echo "请改用查询风格：/api/index.php?path=/config （并用 VITE_API_STYLE=query 重新构建前端）。\n";
 
@@ -48,7 +65,7 @@ if (strlen($secret) >= 12 && isset($_GET['key']) && hash_equals($secret, (string
         $pdo = q_pdo();
         $line('数据库连接', 'OK');
         $line('MySQL 版本', (string) $pdo->getAttribute(PDO::ATTR_SERVER_VERSION));
-        foreach (['users', 'user_terrains', 'prayers', 'sessions', 'topups', 'rate_limits', 'meta'] as $t) {
+        foreach (['users', 'user_terrains', 'prayers', 'sessions', 'topups', 'pay_orders', 'rate_limits', 'meta'] as $t) {
             try {
                 $line("表 $t", (int) $pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn() . ' 行');
             } catch (Throwable $e) {

@@ -9,31 +9,46 @@ const Q_START_ENERGY = 30;
 function q_items(): array
 {
     return [
-        ['id' => 'wood', 'name' => '平安木牌', 'desc' => '朴素木牌，寄托一份平安', 'currency' => 'energy', 'cost' => 10, 'reward' => 0, 'growth' => 1, 'glow' => false, 'color' => '#c9955a'],
-        ['id' => 'ribbon', 'name' => '红绸福带', 'desc' => '一条红绸，系上心愿', 'currency' => 'energy', 'cost' => 25, 'reward' => 5, 'growth' => 1, 'glow' => false, 'color' => '#d8343a'],
-        ['id' => 'gold', 'name' => '金色福牌', 'desc' => '金牌高悬，福气加倍', 'currency' => 'coins', 'cost' => 8, 'reward' => 40, 'growth' => 2, 'glow' => false, 'color' => '#f2c14e'],
-        ['id' => 'lantern', 'name' => '祈福灯', 'desc' => '夜里会发出温暖的光', 'currency' => 'coins', 'cost' => 18, 'reward' => 100, 'growth' => 3, 'glow' => true, 'color' => '#ff8a3d'],
-        ['id' => 'lotus', 'name' => '莲花灯', 'desc' => '莲开一盏，福泽绵长', 'currency' => 'coins', 'cost' => 38, 'reward' => 260, 'growth' => 5, 'glow' => true, 'color' => '#ff8fc0'],
+        ['id' => 'wood', 'name' => '平安木牌', 'desc' => '朴素木牌，寄托一份平安', 'currency' => 'energy', 'cost' => 30, 'reward' => 0, 'growth' => 1, 'glow' => false, 'color' => '#c9955a'],
+        ['id' => 'ribbon', 'name' => '红绸福带', 'desc' => '一条红绸，系上心愿', 'currency' => 'energy', 'cost' => 58, 'reward' => 0, 'growth' => 1, 'glow' => false, 'color' => '#d8343a'],
+        ['id' => 'gold', 'name' => '金色福牌', 'desc' => '金牌高悬，福气加倍', 'currency' => 'coins', 'cost' => 28, 'reward' => 0, 'growth' => 2, 'glow' => false, 'color' => '#f2c14e'],
+        ['id' => 'lantern', 'name' => '祈福灯', 'desc' => '夜里会发出温暖的光', 'currency' => 'coins', 'cost' => 68, 'reward' => 0, 'growth' => 3, 'glow' => true, 'color' => '#ff8a3d'],
+        ['id' => 'lotus', 'name' => '莲花灯', 'desc' => '莲开一盏，福泽绵长', 'currency' => 'coins', 'cost' => 88, 'reward' => 0, 'growth' => 5, 'glow' => true, 'color' => '#ff8fc0'],
     ];
 }
 
 function q_packs(): array
 {
-    return [
-        ['id' => 'p6', 'coins' => 60, 'price' => 6, 'label' => '小福包'],
-        ['id' => 'p30', 'coins' => 330, 'price' => 30, 'label' => '中福包'],
-        ['id' => 'p98', 'coins' => 1180, 'price' => 98, 'label' => '大福包'],
+    $packs = [
+        ['id' => 'p1', 'coins' => 60, 'price' => 1, 'label' => '小福包'],
+        ['id' => 'p5', 'coins' => 330, 'price' => 5, 'label' => '中福包'],
+        ['id' => 'p10', 'coins' => 1180, 'price' => 10, 'label' => '大福包'],
     ];
+    if (q_cfg_bool('PAY_TEST_PRICES')) {
+        // 真实支付联调用的临时价（分），福币数量不变。下单、/config、前端显示都读这里
+        $testCents = ['p1' => 1, 'p5' => 2, 'p10' => 3];
+        foreach ($packs as &$p) {
+            $p['price'] = $testCents[$p['id']] / 100;
+        }
+        unset($p);
+    }
+    return $packs;
+}
+
+/** 档位的实付金额（分）；price 可能是整数元或测试价的小数元 */
+function q_pack_cents(array $pack): int
+{
+    return (int) round($pack['price'] * 100);
 }
 
 function q_terrains(): array
 {
     return [
-        ['id' => 'mountain', 'name' => '山巅云海', 'subtitle' => '孤峰之上', 'desc' => '绝壁孤峰，脚下云海翻涌，远山如黛', 'price' => 30, 'swatch' => ['#8fb4d9', '#f4efe4']],
-        ['id' => 'bamboo', 'name' => '竹林溪谷', 'subtitle' => '幽篁听泉', 'desc' => '竹影婆娑，溪水潺潺，薄雾里有鹿与蜻蜓', 'price' => 30, 'swatch' => ['#3f7a4a', '#b8d9a0']],
-        ['id' => 'jiangnan', 'name' => '江南水乡', 'subtitle' => '烟雨小桥', 'desc' => '粉墙黛瓦，拱桥乌篷，一池莲叶伴垂柳', 'price' => 30, 'swatch' => ['#5f8f9c', '#e8e2d2']],
-        ['id' => 'desert', 'name' => '大漠孤烟', 'subtitle' => '长河落日', 'desc' => '沙丘如浪，孤烟直上，驼铃隐隐', 'price' => 30, 'swatch' => ['#d9a25b', '#f3d9a0']],
-        ['id' => 'snow', 'name' => '雪山寒林', 'subtitle' => '千山鸟飞绝', 'desc' => '雪峰环绕，寒松覆雪，红绸格外醒目', 'price' => 30, 'swatch' => ['#a9c4dc', '#ffffff']],
+        ['id' => 'mountain', 'name' => '山巅云海', 'subtitle' => '孤峰之上', 'desc' => '绝壁孤峰，脚下云海翻涌，远山如黛', 'price' => 888, 'swatch' => ['#8fb4d9', '#f4efe4']],
+        ['id' => 'bamboo', 'name' => '竹林溪谷', 'subtitle' => '幽篁听泉', 'desc' => '竹影婆娑，溪水潺潺，薄雾里有鹿与蜻蜓', 'price' => 888, 'swatch' => ['#3f7a4a', '#b8d9a0']],
+        ['id' => 'jiangnan', 'name' => '江南水乡', 'subtitle' => '烟雨小桥', 'desc' => '粉墙黛瓦，拱桥乌篷，一池莲叶伴垂柳', 'price' => 888, 'swatch' => ['#5f8f9c', '#e8e2d2']],
+        ['id' => 'desert', 'name' => '大漠孤烟', 'subtitle' => '长河落日', 'desc' => '沙丘如浪，孤烟直上，驼铃隐隐', 'price' => 888, 'swatch' => ['#d9a25b', '#f3d9a0']],
+        ['id' => 'snow', 'name' => '雪山寒林', 'subtitle' => '千山鸟飞绝', 'desc' => '雪峰环绕，寒松覆雪，红绸格外醒目', 'price' => 888, 'swatch' => ['#a9c4dc', '#ffffff']],
     ];
 }
 

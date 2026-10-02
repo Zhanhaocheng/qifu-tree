@@ -6,7 +6,7 @@
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
   # 内部目录、配置、SQL 一律不允许直接访问
-  RewriteRule ^(lib/|config\.php$|config\.sample\.php$|.*\.sql$|\.htaccess$) - [F,L]
+  RewriteRule ^(lib/|config\.php$|config\.sample\.php$|.*\.(sql|key|pem)$|\.htaccess$) - [F,L]
 
   # 其它不存在的文件/目录 -> index.php（保留查询串）
   RewriteCond %{REQUEST_FILENAME} !-f
@@ -19,7 +19,7 @@
 </IfModule>
 
 # 没有 mod_rewrite 时（或规则不生效），下面的指令仍然能挡住敏感文件
-<FilesMatch "^(config\.php|config\.sample\.php|\.htaccess)$|\.sql$">
+<FilesMatch "^(config\.php|config\.sample\.php|\.htaccess)$|\.(sql|key|pem)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>

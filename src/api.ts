@@ -53,7 +53,8 @@ function writeToken(token: string | null): void {
 }
 
 function endpoint(url: string): string {
-  if (API_STYLE === 'query') return `${API_BASE}/api/index.php?path=${url.replace(/^\/api/, '')}`;
+  // query 风格下路径本身占用了 ?path=，附带的查询参数要用 & 接在后面
+  if (API_STYLE === 'query') return `${API_BASE}/api/index.php?path=${url.replace(/^\/api/, '').replace('?', '&')}`;
   return API_BASE + url;
 }
 
@@ -139,6 +140,37 @@ export interface Config {
   mode: StorageMode;
 }
 
+export interface PayInfo {
+  /** demo = 未配置支付宝，使用模拟充值；alipay = 真实支付（ready=false 表示配置不完整） */
+  mode: 'demo' | 'alipay';
+  ready: boolean;
+  sandbox: boolean;
+  /** 电脑端：qr = 页面内扫码；page = 跳转支付宝收银台 */
+  pcMode: 'qr' | 'page';
+  /** 测试价开关（PAY_TEST_PRICES）：档位实付金额临时为 0.01 / 0.02 / 0.03 元 */
+  testPrices?: boolean;
+}
+
+export interface PayCreateResponse {
+  orderNo: string;
+  channel: 'wap' | 'page' | 'qr';
+  amount: string;
+  /** wap / page：以 POST 表单提交到支付宝网关 */
+  form?: { action: string; fields: Record<string, string> };
+  /** qr：支付宝二维码内容 */
+  qrCode?: string;
+}
+
+export interface PayOrder {
+  orderNo: string;
+  status: 'pending' | 'paid' | 'closed';
+  channel: 'wap' | 'page' | 'qr';
+  packId: string;
+  coins: number;
+  amount: string;
+  user?: PublicUser;
+}
+
 export interface PrayersResponse {
   tags: PrayerTag[];
   total: number;
@@ -163,4 +195,15 @@ export const api = {
   setTerrain: (terrain: TerrainId) => request<{ spent: number; user: PublicUser }>('POST', '/api/terrain', { terrain }),
   topup: (pack: string) => request<{ added: number; user: PublicUser }>('POST', '/api/topup', { pack }),
   prayers: () => request<PrayersResponse>('GET', '/api/prayers'),
+  /** Node/Vercel 版没有支付接口：任何失败都当作「模拟充值」 */
+  payInfo: () =>
+    request<PayInfo>('GET', '/api/pay/info')
+      .then((r) => (r && (r.mode === 'alipay' || r.mode === 'demo') ? r : null))
+      .catch(() => null),
+  payCreate: (pack: string, device: 'mobile' | 'desktop') =>
+    request<PayCreateResponse>('POST', '/api/pay/alipay/create', { pack, device }, {
+      timeoutMessage: '下单请求超时，请稍后重试（如已扣款，福币会自动到账）',
+    }),
+  payQuery: (orderNo: string) => request<PayOrder>('GET', `/api/pay/alipay/query?orderNo=${encodeURIComponent(orderNo)}`),
+  payRecheck: () => request<{ paid: PayOrder[]; user: PublicUser }>('POST', '/api/pay/alipay/recheck'),
 };
