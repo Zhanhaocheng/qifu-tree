@@ -32,11 +32,12 @@ function q_ensure_test_account(): void
     $existing = q_row('SELECT password_hash FROM users WHERE username_key = ?', [$key]);
     $stale = $existing === null || !password_verify($cfg['password'], $existing['password_hash']);
     $hash = $stale ? password_hash($cfg['password'], PASSWORD_BCRYPT, ['cost' => 10]) : $existing['password_hash'];
+    $nick = q_profile_ready();
     q_run(
-        'INSERT INTO users (username, username_key, password_hash, energy, coins, created_at) VALUES (?, ?, ?, ?, ?, ?)
+        'INSERT INTO users (username, ' . ($nick ? 'nickname, ' : '') . 'username_key, password_hash, energy, coins, created_at) VALUES (?, ' . ($nick ? '?, ' : '') . '?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash),
            energy = GREATEST(energy, VALUES(energy)), coins = GREATEST(coins, VALUES(coins))',
-        [$cfg['username'], $key, $hash, Q_UNLIMITED_BALANCE, Q_UNLIMITED_BALANCE, q_now()]
+        array_merge([$cfg['username']], $nick ? [$cfg['username']] : [], [$key, $hash, Q_UNLIMITED_BALANCE, Q_UNLIMITED_BALANCE, q_now()])
     );
 }
 
@@ -98,6 +99,12 @@ function q_ensure_terrain(array &$u): array
     return ['terrain' => $u['terrain'], 'owned' => $owned];
 }
 
+function q_nickname(array $u): string
+{
+    $n = $u['nickname'] ?? '';
+    return $n !== '' ? $n : $u['username'];
+}
+
 function q_public_user(array $u): array
 {
     $t = q_ensure_terrain($u);
@@ -106,6 +113,9 @@ function q_public_user(array $u): array
     return [
         'id' => (int) $u['id'],
         'username' => $u['username'],
+        'nickname' => q_nickname($u),
+        'avatar' => ($u['avatar'] ?? '') !== '' ? $u['avatar'] : null,
+        'age' => isset($u['age']) ? (int) $u['age'] : null,
         'energy' => (int) $u['energy'],
         'coins' => (int) $u['coins'],
         'streak' => ($last === q_today() || $last === q_yesterday()) ? (int) $u['streak'] : 0,
@@ -195,9 +205,10 @@ function h_register()
     }
     $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 10]);
     try {
+        $nick = q_profile_ready();
         [$id] = q_run(
-            'INSERT INTO users (username, username_key, password_hash, energy, coins, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-            [$username, q_username_key($username), $hash, Q_START_ENERGY, q_now()]
+            'INSERT INTO users (username, ' . ($nick ? 'nickname, ' : '') . 'username_key, password_hash, energy, coins, created_at) VALUES (?, ' . ($nick ? '?, ' : '') . '?, ?, ?, 0, ?)',
+            array_merge([$username], $nick ? [$username] : [], [q_username_key($username), $hash, Q_START_ENERGY, q_now()])
         );
     } catch (PDOException $e) {
         if (($e->errorInfo[1] ?? 0) === 1062) {
@@ -248,6 +259,60 @@ function h_me()
 {
     $u = q_current_user();
     q_json(['user' => $u ? q_public_user($u) : null, 'mode' => (string) q_cfg('MODE', 'local')]);
+}
+
+function q_profile_of(array $u): array
+{
+    return [
+        'username' => $u['username'],
+        'nickname' => q_nickname($u),
+        'avatar' => ($u['avatar'] ?? '') !== '' ? $u['avatar'] : null,
+        'age' => isset($u['age']) ? (int) $u['age'] : null,
+    ];
+}
+
+function h_profile_get()
+{
+    $u = q_current_user();
+    if (!$u) {
+        return q_fail('请先登录', 401);
+    }
+    q_json(['profile' => q_profile_of($u)]);
+}
+
+/** PUT /profile；部分虚拟主机会拦截 PUT，所以 POST /profile 行为完全相同 */
+function h_profile_save()
+{
+    $u = q_current_user();
+    if (!$u) {
+        return q_fail('请先登录', 401);
+    }
+    $parsed = q_validate_profile(q_request_body());
+    if (!$parsed['ok']) {
+        return q_fail($parsed['error']);
+    }
+    if (!q_profile_ready()) {
+        return q_fail('个人资料功能暂时不可用（数据库尚未升级），请联系站长', 503);
+    }
+    $v = $parsed['value'];
+    $sets = [];
+    $args = [];
+    if (array_key_exists('nickname', $v)) {
+        $sets[] = 'nickname = ?';
+        $args[] = $v['nickname'] ?? $u['username'];
+    }
+    if (array_key_exists('avatar', $v)) {
+        $sets[] = 'avatar = ?';
+        $args[] = $v['avatar'];
+    }
+    if (array_key_exists('age', $v)) {
+        $sets[] = 'age = ?';
+        $args[] = $v['age'];
+    }
+    $id = (int) $u['id'];
+    q_run('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = ?', array_merge($args, [$id]));
+    $fresh = q_get_user($id);
+    q_json(['profile' => q_profile_of($fresh), 'user' => q_public_user($fresh)]);
 }
 
 function h_config()
@@ -336,6 +401,7 @@ function h_pray()
             'text' => $text,
             'position' => $res['position'],
             'username' => $u['username'],
+            'nickname' => q_nickname($u),
             'createdAt' => q_now(),
             'mine' => true,
         ],
@@ -408,7 +474,7 @@ function h_prayers()
 {
     $me = q_current_user();
     $rows = q_rows(
-        'SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username
+        'SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username, ' . (q_profile_ready() ? 'u.nickname' : 'NULL AS nickname') . '
          FROM prayers p JOIN users u ON u.id = p.user_id
          ORDER BY p.id DESC LIMIT ' . Q_TAG_LIMIT
     );
@@ -422,6 +488,7 @@ function h_prayers()
             'text' => $r['text'],
             'position' => (int) $r['position'],
             'username' => $r['username'],
+            'nickname' => q_nickname($r),
             'createdAt' => (int) $r['created_at'],
             'mine' => $me !== null && (int) $me['id'] === (int) $r['user_id'],
         ];
@@ -439,6 +506,9 @@ function q_dispatch(): void
         'POST /login' => 'h_login',
         'POST /logout' => 'h_logout',
         'GET /me' => 'h_me',
+        'GET /profile' => 'h_profile_get',
+        'PUT /profile' => 'h_profile_save',
+        'POST /profile' => 'h_profile_save',
         'GET /config' => 'h_config',
         'POST /checkin' => 'h_checkin',
         'POST /pray' => 'h_pray',

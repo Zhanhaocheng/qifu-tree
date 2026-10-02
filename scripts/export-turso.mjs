@@ -43,7 +43,7 @@ const q = (v) => {
 };
 const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
-const users = await rows('SELECT id, username, password_hash, energy, coins, streak, last_checkin, terrain, created_at FROM users ORDER BY id');
+const users = await rows('SELECT * FROM users ORDER BY id');
 const userIds = new Set(users.map((u) => Number(u.id)));
 const terrains = (await rows('SELECT user_id, terrain FROM user_terrains ORDER BY user_id, terrain')).filter((r) => userIds.has(Number(r.user_id)));
 const prayers = (await rows('SELECT id, user_id, item_type, text, position, created_at FROM prayers ORDER BY id')).filter((r) => userIds.has(Number(r.user_id)));
@@ -70,8 +70,8 @@ const batch = (table, cols, data, map) => {
     lines.push(`INSERT INTO ${table} (${cols}) VALUES ${values.join(',')};`);
   }
 };
-batch('users', 'id,username,username_key,password_hash,energy,coins,streak,last_checkin,terrain,created_at', users, (u) => [
-  Number(u.id), u.username, asciiLower(String(u.username)), u.password_hash, Number(u.energy), Number(u.coins), Number(u.streak), u.last_checkin, u.terrain, Number(u.created_at),
+batch('users', 'id,username,username_key,password_hash,energy,coins,streak,last_checkin,terrain,nickname,avatar,age,created_at', users, (u) => [
+  Number(u.id), u.username, asciiLower(String(u.username)), u.password_hash, Number(u.energy), Number(u.coins), Number(u.streak), u.last_checkin, u.terrain, u.nickname || u.username, u.avatar ?? null, u.age == null ? null : Number(u.age), Number(u.created_at),
 ]);
 batch('user_terrains', 'user_id,terrain', terrains, (r) => [Number(r.user_id), r.terrain]);
 batch('prayers', 'id,user_id,item_type,text,position,created_at', prayers, (r) => [Number(r.id), Number(r.user_id), r.item_type, r.text, Number(r.position), Number(r.created_at)]);

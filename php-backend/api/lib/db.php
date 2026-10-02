@@ -22,7 +22,67 @@ function q_pdo(): PDO
         PDO::ATTR_STRINGIFY_FETCHES => false,
     ]);
     $pdo->exec("SET NAMES utf8mb4");
+    q_ensure_profile_columns($pdo);
     return $pdo;
+}
+
+/** 昵称/头像/年龄三列是否可用（老库升级失败时降级：昵称显示用户名，不能保存资料） */
+function q_profile_ready(?bool $set = null): bool
+{
+    static $ready = false;
+    if ($set !== null) {
+        $ready = $set;
+    }
+    return $ready;
+}
+
+/**
+ * 老站点的 users 表没有 nickname / avatar / age：首次访问时自动补列（和 pay_orders 自动建表同一思路）。
+ * - 只用 SHOW COLUMNS + ALTER TABLE ... ADD COLUMN（MySQL 5.5/5.6 都支持），不改已有数据；
+ * - 缺哪列补哪列；并发时后到的请求会遇到 1060（列已存在），忽略即可；
+ * - 刚补上昵称列时，把已有用户的昵称回填为用户名；读取时 NULL 昵称也会回退为用户名，所以回填中断也无害；
+ * - users 表还不存在（尚未运行 install.php）或没有 ALTER 权限时不抛错，接口降级运行。
+ */
+function q_ensure_profile_columns(PDO $pdo): void
+{
+    try {
+        $have = [];
+        foreach ($pdo->query('SHOW COLUMNS FROM `users`')->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $have[strtolower((string) $r['Field'])] = true;
+        }
+    } catch (Throwable $e) {
+        return;
+    }
+    $cols = [
+        'nickname' => 'VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL',
+        'avatar' => 'TEXT CHARACTER SET ascii COLLATE ascii_bin NULL',
+        'age' => 'SMALLINT NULL',
+    ];
+    $addedNickname = false;
+    foreach ($cols as $name => $ddl) {
+        if (isset($have[$name])) {
+            continue;
+        }
+        try {
+            $pdo->exec("ALTER TABLE `users` ADD COLUMN `$name` $ddl");
+            $have[$name] = true;
+            $addedNickname = $addedNickname || $name === 'nickname';
+        } catch (Throwable $e) {
+            if ($e instanceof PDOException && ($e->errorInfo[1] ?? 0) === 1060) {
+                $have[$name] = true;
+                continue;
+            }
+            q_log('profile column migration failed (' . $name . '): ' . $e->getMessage());
+        }
+    }
+    if ($addedNickname) {
+        try {
+            $pdo->exec('UPDATE `users` SET `nickname` = `username` WHERE `nickname` IS NULL');
+        } catch (Throwable $e) {
+            q_log('nickname backfill failed: ' . $e->getMessage());
+        }
+    }
+    q_profile_ready(isset($have['nickname'], $have['avatar'], $have['age']));
 }
 
 function q_exec(string $sql, array $args = []): PDOStatement

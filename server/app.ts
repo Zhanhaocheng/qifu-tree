@@ -17,6 +17,7 @@ import {
   stageOf,
   type PrayerTag,
   type PublicUser,
+  validateProfile,
 } from '../shared/game.js';
 
 const SESSION_COOKIE = 'qifu_session';
@@ -45,6 +46,9 @@ export function allowedOriginsFromEnv(env: Record<string, string | undefined> = 
 interface UserRow {
   id: number;
   username: string;
+  nickname: string | null;
+  avatar: string | null;
+  age: number | null;
   password_hash: string;
   energy: number;
   coins: number;
@@ -71,7 +75,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     cors({
       origin: (origin) => (origins.has(origin) ? origin : null),
       allowHeaders: ['Content-Type', 'Authorization'],
-      allowMethods: ['GET', 'POST', 'OPTIONS'],
+      allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
       credentials: true,
       maxAge: 86400,
     }),
@@ -127,6 +131,9 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     return {
       id: u.id,
       username: u.username,
+      nickname: u.nickname || u.username,
+      avatar: u.avatar || null,
+      age: u.age ?? null,
       energy: u.energy,
       coins: u.coins,
       streak: u.last_checkin === today() || u.last_checkin === yesterday() ? u.streak : 0,
@@ -207,8 +214,8 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     const hash = await bcrypt.hash(password, 10);
     try {
       const info = await db.run(
-        'INSERT INTO users (username, password_hash, energy, coins, created_at) VALUES (?, ?, ?, 0, ?)',
-        [username, hash, START_ENERGY, now()],
+        'INSERT INTO users (username, nickname, password_hash, energy, coins, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+        [username, username, hash, START_ENERGY, now()],
       );
       noteFailure(key);
       const token = await startSession(c, info.lastId);
@@ -247,6 +254,42 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
     const u = await currentUser(c);
     return c.json({ user: u ? await toPublic(u) : null, mode: db.mode });
   });
+
+  const profileOf = (u: UserRow) => ({ username: u.username, nickname: u.nickname || u.username, avatar: u.avatar || null, age: u.age ?? null });
+
+  app.get('/api/profile', async (c) => {
+    const u = await currentUser(c);
+    if (!u) return fail(c, '请先登录', 401);
+    return c.json({ profile: profileOf(u) });
+  });
+
+  // 部分虚拟主机会拦截 PUT，所以同时接受 POST（行为完全相同）
+  const saveProfile = async (c: Context) => {
+    const u = await currentUser(c);
+    if (!u) return fail(c, '请先登录', 401);
+    const parsed = validateProfile(await body(c));
+    if (!parsed.ok) return fail(c, parsed.error);
+    const v = parsed.value;
+    const sets: string[] = [];
+    const args: (string | number | null)[] = [];
+    if ('nickname' in v) {
+      sets.push('nickname = ?');
+      args.push(v.nickname ?? u.username);
+    }
+    if ('avatar' in v) {
+      sets.push('avatar = ?');
+      args.push(v.avatar ?? null);
+    }
+    if ('age' in v) {
+      sets.push('age = ?');
+      args.push(v.age ?? null);
+    }
+    await db.run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, [...args, u.id]);
+    const fresh = (await getUser(u.id))!;
+    return c.json({ profile: profileOf(fresh), user: await toPublic(fresh) });
+  };
+  app.put('/api/profile', saveProfile);
+  app.post('/api/profile', saveProfile);
 
   app.get('/api/config', (c) =>
     c.json({ items: ITEMS, packs: TOPUP_PACKS, terrains: TERRAINS, maxWishLength: MAX_WISH_LENGTH, mode: db.mode }),
@@ -311,6 +354,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       text,
       position: res.position,
       username: u.username,
+      nickname: u.nickname || u.username,
       createdAt: now(),
       mine: true,
     };
@@ -365,8 +409,9 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       created_at: number;
       user_id: number;
       username: string;
+      nickname: string | null;
     }>(
-      `SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username
+      `SELECT p.id, p.item_type, p.text, p.position, p.created_at, p.user_id, u.username, u.nickname
        FROM prayers p JOIN users u ON u.id = p.user_id
        ORDER BY p.id DESC LIMIT ?`,
       [TAG_LIMIT],
@@ -381,6 +426,7 @@ export function createApp({ db: dbInput, timeZone = 'Asia/Shanghai', now = Date.
       text: r.text,
       position: r.position,
       username: r.username,
+      nickname: r.nickname || r.username,
       createdAt: r.created_at,
       mine: me?.id === r.user_id,
     }));

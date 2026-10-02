@@ -28,11 +28,11 @@ export async function ensureTestAccount(db: Db, cfg: TestAccountConfig | null, n
   const stale = !existing || !(await bcrypt.compare(cfg.password, existing.password_hash));
   const hash = stale ? await bcrypt.hash(cfg.password, 10) : existing!.password_hash;
   await db.run(
-    `INSERT INTO users (username, password_hash, energy, coins, created_at) VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO users (username, nickname, password_hash, energy, coins, created_at) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(username) DO UPDATE SET
        password_hash = excluded.password_hash,
        energy = MAX(users.energy, excluded.energy),
        coins = MAX(users.coins, excluded.coins)`,
-    [cfg.username, hash, UNLIMITED_BALANCE, UNLIMITED_BALANCE, now()],
+    [cfg.username, cfg.username, hash, UNLIMITED_BALANCE, UNLIMITED_BALANCE, now()],
   );
 }

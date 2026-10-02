@@ -61,6 +61,11 @@ try {
     }
     $log[] = "表结构已就绪（执行 $n 条语句，已存在的表不会被改动）";
 
+    q_ensure_profile_columns($pdo);
+    $log[] = q_profile_ready()
+        ? 'users 表的昵称 / 头像 / 年龄列已就绪（老库会自动补列，已有用户昵称默认为用户名）'
+        : '警告：users 表缺少昵称 / 头像 / 年龄列且自动补列失败（可能没有 ALTER 权限）。请在 phpMyAdmin 执行 upgrade-profile.sql，在此之前个人资料无法保存，其余功能不受影响。';
+
     $importFile = __DIR__ . '/import.sql';
     $users = (int) q_val('SELECT COUNT(*) FROM users');
     if (!is_file($importFile)) {
