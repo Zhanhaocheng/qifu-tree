@@ -1,6 +1,7 @@
 import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
 import type { StorageMode } from './api';
 import type { AudioState } from './audio';
+import { markReady } from './motion';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 
@@ -8,8 +9,13 @@ const ICONS = {
   energy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></svg>',
   coin: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><rect x="9" y="9" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
   flame: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2c1 4-3 5.5-3 9.5a3 3 0 0 0 6 0c0-1-.4-1.8-1-2.6 3 1 5 3.6 5 6.6a7 7 0 0 1-14 0C5 9 10 7 12 2z"/></svg>',
-  soundOn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg>',
-  soundOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m16 9 5 6m0-6-5 6"/></svg>',
+  soundOn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path class="sw1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 9a4 4 0 0 1 0 6"/><path class="sw2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M18.5 6.5a8 8 0 0 1 0 11"/></svg>',
+  soundOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9z"/><path class="sx" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m16 9 5 6m0-6-5 6"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM4 4l16 16"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+  ok: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  warn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M12 6v7.5"/><circle cx="12" cy="18" r="1.8" fill="currentColor"/></svg>',
+  info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6.5" r="1.8" fill="currentColor"/><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" d="M12 11v7"/></svg>',
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 3v4m8-4v4M8 13l3 3 5-5"/></svg>',
   pray: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M7 3h10l-1 5 3 3v10H5V11l3-3z"/><circle cx="12" cy="14" r="2" fill="currentColor"/></svg>',
   shop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M4 8h16l-1.2 11.2a1 1 0 0 1-1 .8H6.2a1 1 0 0 1-1-.8zM8 8a4 4 0 0 1 8 0"/></svg>',
@@ -20,8 +26,11 @@ const ICONS = {
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const tweens = new WeakMap<HTMLElement, number>();
 
-/** 数字滚动到新值；delta 提示（+8 / -10）只在 floatDelta 为 true 时浮出 */
-export function tweenNumber(el: HTMLElement, to: number, floatDelta = false) {
+/**
+ * 数字滚动到新值（easeOutQuart）；delta 提示（+8 / -10）只在 floatDelta 为 true 时浮出。
+ * quiet 用于首次显示：只做 0 → 当前值的滚动，不触发 bump/delta。
+ */
+export function tweenNumber(el: HTMLElement, to: number, floatDelta = false, quiet = false) {
   const from = el.dataset.v === undefined ? to : Number(el.dataset.v);
   el.dataset.v = String(to);
   const running = tweens.get(el);
@@ -30,22 +39,24 @@ export function tweenNumber(el: HTMLElement, to: number, floatDelta = false) {
     el.textContent = String(to);
     return;
   }
-  const host = el.closest<HTMLElement>('.stat, .balance') ?? el.parentElement!;
-  host.classList.remove('bump-up', 'bump-down');
-  void host.offsetWidth;
-  host.classList.add(to > from ? 'bump-up' : 'bump-down');
-  if (floatDelta) {
-    const tag = document.createElement('i');
-    tag.className = `delta ${to > from ? 'up' : 'down'}`;
-    tag.textContent = `${to > from ? '+' : '-'}${Math.abs(to - from)}`;
-    host.appendChild(tag);
-    setTimeout(() => tag.remove(), 1500);
+  if (!quiet) {
+    const host = el.closest<HTMLElement>('.stat, .balance') ?? el.parentElement!;
+    host.classList.remove('bump-up', 'bump-down');
+    void host.offsetWidth;
+    host.classList.add(to > from ? 'bump-up' : 'bump-down');
+    if (floatDelta) {
+      const tag = document.createElement('i');
+      tag.className = `delta ${to > from ? 'up' : 'down'}`;
+      tag.textContent = `${to > from ? '+' : '-'}${Math.abs(to - from)}`;
+      host.appendChild(tag);
+      setTimeout(() => tag.remove(), 1500);
+    }
   }
-  const dur = Math.min(1200, 450 + Math.abs(to - from) * 4);
+  const dur = Math.min(1400, 520 + Math.abs(to - from) * 4);
   const t0 = performance.now();
   const step = (now: number) => {
     const k = Math.min(1, (now - t0) / dur);
-    const e = 1 - Math.pow(1 - k, 3);
+    const e = 1 - Math.pow(1 - k, 4);
     el.textContent = String(Math.round(from + (to - from) * e));
     if (k < 1) tweens.set(el, requestAnimationFrame(step));
     else tweens.delete(el);
@@ -70,29 +81,29 @@ export function mountHud(h: HudHandlers) {
   hud.innerHTML = `
     <header class="top">
       <div class="brand">
-        <h1>祈福树</h1>
+        <h1><i class="seal" aria-hidden="true">福</i><span class="title-text">祈福树</span></h1>
         <span class="chip" id="stage-chip"></span>
       </div>
       <div class="top-right">
         <div class="sound-wrap"><button class="icon-btn" id="btn-sound" data-sound-toggle aria-label="声音开关" title="声音开关"></button><span class="sound-tip" id="sound-tip" hidden>轻点开启声音</span></div>
-        <div id="user-area"></div>
+        <div id="user-area"><i class="skeleton skeleton-pill" aria-hidden="true"></i></div>
       </div>
     </header>
     <div class="stats" id="stats" hidden>
-      <div class="stat" title="能量：签到获得，用于基础祈福">${ICONS.energy}<b id="st-energy">0</b><span>能量</span></div>
-      <div class="stat coin" title="福币：充值获得，用于高级道具">${ICONS.coin}<b id="st-coins">0</b><span>福币</span><button class="mini" id="btn-add-coin" aria-label="充值福币">+</button></div>
-      <div class="stat flame" title="连续签到天数">${ICONS.flame}<b id="st-streak">0</b><span>天连签</span></div>
+      <div class="stat" title="能量：签到获得，用于基础祈福">${ICONS.energy}<b class="num" id="st-energy">0</b><span>能量</span></div>
+      <div class="stat coin" title="福币：充值获得，用于高级道具">${ICONS.coin}<b class="num" id="st-coins">0</b><span>福币</span><button class="mini" id="btn-add-coin" aria-label="充值福币">+</button></div>
+      <div class="stat flame" title="连续签到天数">${ICONS.flame}<b class="num" id="st-streak">0</b><span>天连签</span></div>
     </div>
-    <div class="growth" id="growth" hidden><div class="growth-bar"><i id="growth-fill"></i></div><span id="growth-text"></span></div>
+    <div class="growth" id="growth" hidden><div class="growth-bar"><i id="growth-fill" style="transform:scaleX(0.04)"></i></div><span id="growth-text"></span></div>
     <div class="demo-banner" id="demo-banner" hidden></div>
     <div class="hint" id="hint">拖动旋转 · 滚轮或双指缩放 · 点击祈福牌查看心愿</div>
     <nav class="actions">
-      <button class="act" id="btn-checkin">${ICONS.check}<span id="checkin-label">每日签到</span></button>
+      <button class="act" id="btn-checkin">${ICONS.check}<span id="checkin-label">每日签到</span><i class="stamp" aria-hidden="true">签</i></button>
       <button class="act primary" id="btn-pray">${ICONS.pray}<span>祈福</span></button>
       <button class="act" id="btn-terrain">${ICONS.land}<span>地形</span></button>
       <button class="act" id="btn-shop">${ICONS.shop}<span>商店</span></button>
     </nav>
-    <div class="tag-count" id="tag-count"></div>`;
+    <div class="tag-count" id="tag-count"><i class="skeleton skeleton-line" aria-hidden="true"></i></div>`;
   $('#btn-sound').addEventListener('click', h.onSound);
   $('#btn-checkin').addEventListener('click', h.onCheckin);
   $('#btn-pray').addEventListener('click', h.onPray);
@@ -122,7 +133,7 @@ export function mountHud(h: HudHandlers) {
         $('#stats').hidden = true;
         $('#growth').hidden = true;
         $('#checkin-label').textContent = '每日签到';
-        $('#btn-checkin').classList.remove('done');
+        $('#btn-checkin').classList.remove('done', 'todo');
         return;
       }
       area.innerHTML = `<div class="user-pill"><span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span><span class="uname">${esc(user.username)}</span><button class="linkish" id="btn-logout">退出</button></div>`;
@@ -134,26 +145,30 @@ export function mountHud(h: HudHandlers) {
         const el = $(id);
         if (same) tweenNumber(el, v, id !== '#st-streak');
         else {
-          delete el.dataset.v;
-          tweenNumber(el, v);
+          el.dataset.v = '0';
+          tweenNumber(el, v, false, true);
         }
       }
       $('#checkin-label').textContent = user.checkedInToday ? '今日已签到' : '每日签到';
       $('#btn-checkin').classList.toggle('done', user.checkedInToday);
+      $('#btn-checkin').classList.toggle('todo', !user.checkedInToday);
       const next = STAGES[user.stage + 1];
       $('#growth').hidden = false;
       const cur = STAGES[user.stage];
       if (next) {
         const pct = ((user.prayerCount - cur.min) / (next.min - cur.min)) * 100;
-        $('#growth-fill').style.width = `${Math.max(4, Math.min(100, pct))}%`;
+        $('#growth-fill').style.transform = `scaleX(${Math.max(0.04, Math.min(1, pct / 100))})`;
         $('#growth-text').textContent = `${cur.name} · 再祈福 ${next.min - user.prayerCount} 次长成${next.name}`;
       } else {
-        $('#growth-fill').style.width = '100%';
+        $('#growth-fill').style.transform = 'scaleX(1)';
         $('#growth-text').textContent = `${cur.name} · 已祈福 ${user.prayerCount} 次`;
       }
     },
     setStage(stage: number, label: string) {
       $('#stage-chip').textContent = `${STAGES[stage].name}${label ? ' · ' + label : ''}`;
+    },
+    clearTagCount() {
+      $('#tag-count').textContent = '';
     },
     setTagCount(shown: number, total: number) {
       $('#tag-count').textContent = total > 0 ? `树上挂着 ${shown} 块祈福牌${total > shown ? `（共 ${total} 个心愿）` : ''}` : '树上还没有祈福牌，来挂第一块吧';
@@ -166,16 +181,27 @@ export function mountHud(h: HudHandlers) {
   };
 }
 
+const TOAST_ICON = { info: ICONS.info, success: ICONS.ok, error: ICONS.warn } as const;
+const TOAST_LIFE = 3200;
+
 export function toast(message: string, kind: 'info' | 'error' | 'success' = 'info') {
+  const host = $('#toasts');
+  while (host.children.length >= 3) host.firstElementChild?.remove();
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
-  el.textContent = message;
-  $('#toasts').appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => {
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  el.style.setProperty('--life', `${TOAST_LIFE}ms`);
+  el.innerHTML = `<i class="toast-ico">${TOAST_ICON[kind]}</i><span>${esc(message)}</span><i class="toast-bar"></i>`;
+  host.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+  const dismiss = () => {
+    if (el.classList.contains('leaving')) return;
     el.classList.remove('show');
-    setTimeout(() => el.remove(), 400);
-  }, 3200);
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 320);
+  };
+  el.addEventListener('click', dismiss);
+  setTimeout(dismiss, TOAST_LIFE);
 }
 
 let closeCurrent: (() => void) | null = null;
@@ -220,7 +246,7 @@ export function openAuth(onSubmit: (mode: 'login' | 'register', username: string
     </div>
     <form class="form" autocomplete="on">
       <label>用户名<input name="username" autocomplete="username" maxlength="20" required placeholder="2-20 位，可用汉字" /></label>
-      <label>密码<input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="72" required placeholder="至少 6 位" /></label>
+      <label>密码<span class="field"><input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="72" required placeholder="至少 6 位" /><button type="button" class="eye" aria-label="显示密码" aria-pressed="false">${ICONS.eye}</button></span></label>
       <p class="form-error" role="alert" hidden></p>
       <button class="btn primary block" type="submit">登录</button>
       <p class="fine">新用户注册即送 30 点能量，每天签到还能领取更多。</p>
@@ -257,6 +283,16 @@ export function openAuth(onSubmit: (mode: 'login' | 'register', username: string
       err.textContent = message;
       err.hidden = false;
     } else d.close();
+  });
+  const pwd = $<HTMLInputElement>('input[name=password]', d.el);
+  const eye = $<HTMLButtonElement>('.eye', d.el);
+  eye.addEventListener('click', () => {
+    const show = pwd.type === 'password';
+    pwd.type = show ? 'text' : 'password';
+    eye.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
+    eye.setAttribute('aria-pressed', String(show));
+    eye.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    pwd.focus();
   });
   setTimeout(() => $<HTMLInputElement>('input[name=username]', d.el).focus(), 60);
 }
@@ -305,7 +341,13 @@ export function openPray(
       onSelect();
     }),
   );
-  text.addEventListener('input', () => ($('#wish-count', d.el).textContent = String([...text.value].length)));
+  const counter = $('.counter', d.el);
+  text.addEventListener('input', () => {
+    const len = [...text.value].length;
+    $('#wish-count', d.el).textContent = String(len);
+    counter.classList.toggle('near', len >= maxLen * 0.8 && len < maxLen);
+    counter.classList.toggle('full', len >= maxLen);
+  });
   $('form', d.el).addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!selected) return;
@@ -447,6 +489,9 @@ export function showPopup(tag: PrayerTag | null, x: number, y: number) {
   const item = ITEMS.find((i) => i.id === tag.itemType)!;
   el.innerHTML = `<div class="popup-head"><i class="swatch ${item.glow ? 'glow' : ''}" style="--c:${item.color}"></i><b>${esc(tag.username)}${tag.mine ? '（我）' : ''}</b><small>${item.name} · ${timeFmt.format(tag.createdAt)}</small></div><p>${esc(tag.text)}</p>`;
   el.hidden = false;
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = '';
   const w = Math.min(300, innerWidth - 24);
   el.style.width = `${w}px`;
   const left = Math.max(12, Math.min(innerWidth - w - 12, x - w / 2));
@@ -455,8 +500,10 @@ export function showPopup(tag: PrayerTag | null, x: number, y: number) {
   el.style.top = `${top}px`;
 }
 
-export function hideLoading() {
+export async function hideLoading() {
   const l = $('#loading');
+  await Promise.race([document.fonts?.ready, new Promise((r) => setTimeout(r, 1500))]).catch(() => undefined);
   l.classList.add('hide');
-  setTimeout(() => l.remove(), 700);
+  markReady();
+  setTimeout(() => l.remove(), 800);
 }
