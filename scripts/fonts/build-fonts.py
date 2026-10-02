@@ -24,7 +24,7 @@ os.makedirs(OUT, exist_ok=True)
 
 CJK = re.compile(r'[\u3000-\u303f\u3400-\u9fff\uff00-\uffef\u2018-\u201d\u2026\u00b7\u2014]')
 files = [f'{ROOT}/src/{n}' for n in ('ui.ts', 'main.ts', 'fx.ts', 'api.ts', 'motion.ts')] + [f'{ROOT}/shared/game.ts', f'{ROOT}/index.html', f'{ROOT}/server/app.ts'] \
-    + [f'{ROOT}/php-backend/api/lib/{n}.php' for n in ('app', 'game', 'core', 'alipay')]
+    + [f'{ROOT}/php-backend/api/lib/{n}.php' for n in ('app', 'game', 'core')]
 COMMENT = re.compile(r'/\*.*?\*/|(?<![:\'"`])//[^\n]*|<!--.*?-->|(?m:^\s*#[^\n]*)', re.S)
 ui = set()
 for f in files:
