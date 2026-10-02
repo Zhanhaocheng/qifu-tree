@@ -84,7 +84,7 @@ for (const mode of ['vercel(default)', 'cross-origin', 'query-style']) {
   });
   await t('server error messages pass through (402/409)', async () => {
     behavior = () => Promise.resolve(respond(402, { error: '福币不足，请先充值' }));
-    eq((await rej(api.topup('p6'))).message, '福币不足，请先充值');
+    eq((await rej(api.topup('p1'))).message, '福币不足，请先充值');
   });
   await t('token handling', async () => {
     store.clear();

@@ -394,7 +394,7 @@ export function openShop(
      </div>
      <h3 class="shop-perks-title">福币可以换什么</h3>
      <ul class="perks">${ITEMS.filter((i) => i.currency === 'coins')
-       .map((i) => `<li><i class="swatch ${i.glow ? 'glow' : ''}" style="--c:${i.color}"></i><b>${i.name}</b><span>${i.cost} 福币 · 返还 ${i.reward} 能量${i.glow ? ' · 夜间发光' : ''}</span></li>`)
+       .map((i) => `<li><i class="swatch ${i.glow ? 'glow' : ''}" style="--c:${i.color}"></i><b>${i.name}</b><span>${i.cost} 福币${i.reward ? ` · 返还 ${i.reward} 能量` : ''}${i.glow ? ' · 夜间发光' : ''}</span></li>`)
        .join('')}</ul>
      <p class="error-line form-error" role="alert" hidden></p>`,
   );

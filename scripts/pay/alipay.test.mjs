@@ -41,7 +41,7 @@ function notifyParams(over = {}) {
   const p = {
     gmt_create: '2026-10-02 10:00:00', charset: 'utf-8', seller_id: '2088000000000001', subject: 'test',
     sign_type: 'RSA2', notify_id: randomBytes(8).toString('hex'), notify_type: 'trade_status_sync', app_id: APP_ID,
-    version: '1.0', auth_app_id: APP_ID, buyer_id: '2088000000000009', invoice_amount: '6.00', fund_bill_list: '[{"amount":"6.00","fundChannel":"ALIPAYACCOUNT"}]',
+    version: '1.0', auth_app_id: APP_ID, buyer_id: '2088000000000009', invoice_amount: '1.00', fund_bill_list: '[{"amount":"1.00","fundChannel":"ALIPAYACCOUNT"}]',
     trade_status: 'TRADE_SUCCESS', gmt_payment: '2026-10-02 10:00:05', ...over,
   };
   p.sign = sign(signContent(p, ['sign', 'sign_type']), aliKeys.privateKey);
@@ -148,9 +148,9 @@ async function newUser(base = SITE) {
   return { jar, name, id: r.json.user.id };
 }
 const coinsOf = async (u) => (await call(SITE, 'GET', '/me', { jar: u.jar })).json.user.coins;
-const create = (u, pack = 'p6', device = 'desktop') => call(SITE, 'POST', '/pay/alipay/create', { body: { pack, device }, jar: u.jar });
+const create = (u, pack = 'p1', device = 'desktop') => call(SITE, 'POST', '/pay/alipay/create', { body: { pack, device }, jar: u.jar });
 const postNotify = (params) => call(SITE, 'POST', '/pay/alipay/notify', { form: params });
-const payNotify = (orderNo, over = {}) => notifyParams({ out_trade_no: orderNo, trade_no: `2026100222001${orderNo.slice(-8)}`, total_amount: '6.00', ...over });
+const payNotify = (orderNo, over = {}) => notifyParams({ out_trade_no: orderNo, trade_no: `2026100222001${orderNo.slice(-8)}`, total_amount: '1.00', ...over });
 
 before(async () => {
   await new Promise((r) => gw.listen(PORT_GW, '127.0.0.1', r));
@@ -187,17 +187,17 @@ test('未配置支付宝：保留模拟充值，真实支付接口不可用', as
   const info = await call(DEMO, 'GET', '/pay/info');
   assert.equal(info.json.mode, 'demo');
   const u = await newUser(DEMO);
-  const top = await call(DEMO, 'POST', '/topup', { body: { pack: 'p6' }, jar: u.jar });
+  const top = await call(DEMO, 'POST', '/topup', { body: { pack: 'p1' }, jar: u.jar });
   assert.equal(top.status, 200);
   assert.equal(top.json.added, 60);
   assert.equal(top.json.demo, true);
-  const c = await call(DEMO, 'POST', '/pay/alipay/create', { body: { pack: 'p6' }, jar: u.jar });
+  const c = await call(DEMO, 'POST', '/pay/alipay/create', { body: { pack: 'p1' }, jar: u.jar });
   assert.equal(c.status, 400);
 });
 
 test('已配置支付宝：模拟充值接口被关闭（不能白拿福币）', async () => {
   const u = await newUser();
-  const top = await call(SITE, 'POST', '/topup', { body: { pack: 'p98' }, jar: u.jar });
+  const top = await call(SITE, 'POST', '/topup', { body: { pack: 'p10' }, jar: u.jar });
   assert.equal(top.status, 403);
   assert.equal(await coinsOf(u), 0);
 });
@@ -209,19 +209,19 @@ test('配置填了一半（只有 APPID）：不退回模拟充值，也不能�
   const u = await newUser('http://127.0.0.1:47384');
   const info = await call('http://127.0.0.1:47384', 'GET', '/pay/info');
   assert.deepEqual([info.json.mode, info.json.ready], ['alipay', false]);
-  assert.equal((await call('http://127.0.0.1:47384', 'POST', '/topup', { body: { pack: 'p6' }, jar: u.jar })).status, 403);
-  assert.equal((await call('http://127.0.0.1:47384', 'POST', '/pay/alipay/create', { body: { pack: 'p6' }, jar: u.jar })).status, 503);
+  assert.equal((await call('http://127.0.0.1:47384', 'POST', '/topup', { body: { pack: 'p1' }, jar: u.jar })).status, 403);
+  assert.equal((await call('http://127.0.0.1:47384', 'POST', '/pay/alipay/create', { body: { pack: 'p1' }, jar: u.jar })).status, 503);
 });
 
 test('下单需要登录；档位必须存在', async () => {
-  assert.equal((await call(SITE, 'POST', '/pay/alipay/create', { body: { pack: 'p6' } })).status, 401);
+  assert.equal((await call(SITE, 'POST', '/pay/alipay/create', { body: { pack: 'p1' } })).status, 401);
   const u = await newUser();
   assert.equal((await create(u, 'nope')).status, 400);
 });
 
 test('手机端 wap.pay：表单参数完整且签名可被支付宝公钥侧验证', async () => {
   const u = await newUser();
-  const r = await create(u, 'p30', 'mobile');
+  const r = await create(u, 'p5', 'mobile');
   assert.equal(r.status, 200, r.text);
   const { form, orderNo, channel } = r.json;
   assert.equal(channel, 'wap');
@@ -236,7 +236,7 @@ test('手机端 wap.pay：表单参数完整且签名可被支付宝公钥侧验
   assert.match(f.timestamp, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
   const biz = JSON.parse(f.biz_content);
   assert.equal(biz.out_trade_no, orderNo);
-  assert.equal(biz.total_amount, '30.00');
+  assert.equal(biz.total_amount, '5.00');
   assert.equal(biz.product_code, 'QUICK_WAP_WAY');
   assert.equal(biz.subject, '祈福树福币·中福包');
   assert.ok(createVerify('RSA-SHA256').update(signContent(f), 'utf8').verify(appKeys.publicKey, f.sign, 'base64'));
@@ -245,18 +245,18 @@ test('手机端 wap.pay：表单参数完整且签名可被支付宝公钥侧验
 
 test('电脑端 precreate：二维码来自（验签通过的）网关响应', async () => {
   const u = await newUser();
-  const r = await create(u, 'p6', 'desktop');
+  const r = await create(u, 'p1', 'desktop');
   assert.equal(r.status, 200, r.text);
   assert.equal(r.json.channel, 'qr');
   assert.equal(r.json.qrCode, `https://qr.alipay.com/fake_${r.json.orderNo}`);
   const req = gwRequests.findLast((x) => x.method === 'alipay.trade.precreate');
   assert.equal(req.notify_url, NOTIFY_URL);
-  assert.equal(JSON.parse(req.biz_content).total_amount, '6.00');
+  assert.equal(JSON.parse(req.biz_content).total_amount, '1.00');
 });
 
 test('notify：无需登录/Cookie，成功只输出纯文本 success，并且幂等入账', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p6');
+  const { json: o } = await create(u, 'p1');
   const before_ = await coinsOf(u);
 
   const r1 = await postNotify(payNotify(o.orderNo));
@@ -279,8 +279,8 @@ test('notify：无需登录/Cookie，成功只输出纯文本 success，并且�
 
 test('notify：10 路并发重复通知只入账一次', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p30');
-  const params = payNotify(o.orderNo, { total_amount: '30.00' });
+  const { json: o } = await create(u, 'p5');
+  const params = payNotify(o.orderNo, { total_amount: '5.00' });
   const rs = await Promise.all(Array.from({ length: 10 }, () => postNotify(params)));
   for (const r of rs) assert.equal(r.text, 'success');
   assert.equal(await coinsOf(u), 330);
@@ -290,18 +290,18 @@ test('notify：10 路并发重复通知只入账一次', async () => {
 
 test('notify：验签 / 金额 / app_id / sign_type 校验，失败都返回 fail 且不入账', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p6');
+  const { json: o } = await create(u, 'p1');
   const good = payNotify(o.orderNo);
 
   assert.equal((await postNotify({ ...good, sign: 'AAAA' })).text, 'fail');
   assert.equal((await postNotify({ ...good, total_amount: '0.01' })).text, 'fail', '改金额后签名失效');
-  const forged = notifyParams({ out_trade_no: o.orderNo, trade_no: 'x1', total_amount: '6.00' });
+  const forged = notifyParams({ out_trade_no: o.orderNo, trade_no: 'x1', total_amount: '1.00' });
   const wrongKey = { ...forged, sign: sign(signContent(forged, ['sign', 'sign_type']), appKeys.privateKey) };
   assert.equal((await postNotify(wrongKey)).text, 'fail', '用别的密钥签名');
   assert.equal((await postNotify(payNotify(o.orderNo, { total_amount: '0.01' }))).text, 'fail', '签名有效但金额与订单不符');
   assert.equal((await postNotify(payNotify(o.orderNo, { app_id: '2021999999999999' }))).text, 'fail', 'app_id 不符');
   assert.equal((await postNotify(payNotify(o.orderNo, { seller_id: '2088111111111111' }))).text, 'fail', 'seller_id 不符');
-  const rsa1 = notifyParams({ out_trade_no: o.orderNo, trade_no: 'x2', total_amount: '6.00', sign_type: 'RSA' });
+  const rsa1 = notifyParams({ out_trade_no: o.orderNo, trade_no: 'x2', total_amount: '1.00', sign_type: 'RSA' });
   assert.equal((await postNotify(rsa1)).text, 'fail', '拒绝 RSA(SHA1) 降级');
   const noSign = { ...good };
   delete noSign.sign;
@@ -317,7 +317,7 @@ test('notify：验签 / 金额 / app_id / sign_type 校验，失败都返回 fai
 
 test('notify：签名参数从 POST body 读取，URL 查询串里的同名参数无效', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p6');
+  const { json: o } = await create(u, 'p1');
   const good = payNotify(o.orderNo);
   // 把合法参数塞进 query、body 为空 -> 必须失败
   const qs = new URLSearchParams(good).toString();
@@ -329,7 +329,7 @@ test('notify：签名参数从 POST body 读取，URL 查询串里的同名参�
 test('notify：未知订单（验签通过）确认收到；TRADE_CLOSED 关闭订单，但之后真有付款仍会入账', async () => {
   assert.equal((await postNotify(payNotify('QF000000UNKNOWN'))).text, 'success');
   const u = await newUser();
-  const { json: o } = await create(u, 'p6');
+  const { json: o } = await create(u, 'p1');
   assert.equal((await postNotify(payNotify(o.orderNo, { trade_status: 'WAIT_BUYER_PAY' }))).text, 'success');
   assert.equal(await coinsOf(u), 0);
   assert.equal((await postNotify(payNotify(o.orderNo, { trade_status: 'TRADE_CLOSED' }))).text, 'success');
@@ -343,23 +343,23 @@ test('notify：未知订单（验签通过）确认收到；TRADE_CLOSED 关闭�
 
 test('查单补单：网关回 TRADE_SUCCESS 时入账一次；轮询、再通知都不会重复', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p98');
+  const { json: o } = await create(u, 'p10');
   let q = await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`, { jar: u.jar });
   assert.equal(q.json.status, 'pending'); // 网关：交易不存在
-  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '98.00', tradeNo: `2026100222001${o.orderNo.slice(-8)}` });
+  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '10.00', tradeNo: `2026100222001${o.orderNo.slice(-8)}` });
   await new Promise((r) => setTimeout(r, 4200)); // 越过 4 秒查单节流
   q = await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`, { jar: u.jar });
   assert.equal(q.json.status, 'paid');
   assert.equal(q.json.coins, 1180);
   assert.equal(q.json.user.coins, 1180);
   await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`, { jar: u.jar });
-  assert.equal((await postNotify(payNotify(o.orderNo, { total_amount: '98.00' }))).text, 'success');
+  assert.equal((await postNotify(payNotify(o.orderNo, { total_amount: '10.00' }))).text, 'success');
   assert.equal(await coinsOf(u), 1180);
 });
 
 test('查单：同一订单 4 秒内只向支付宝查一次（防止轮询打爆网关）', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p6');
+  const { json: o } = await create(u, 'p1');
   const n0 = gwRequests.filter((x) => x.method === 'alipay.trade.query').length;
   for (let i = 0; i < 5; i++) await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`, { jar: u.jar });
   assert.equal(gwRequests.filter((x) => x.method === 'alipay.trade.query').length - n0, 1);
@@ -367,9 +367,9 @@ test('查单：同一订单 4 秒内只向支付宝查一次（防止轮询打�
 
 test('查单：网关响应被篡改（验签失败）或金额不符时不入账', async () => {
   const u = await newUser();
-  const a = (await create(u, 'p6')).json;
-  const b = (await create(u, 'p6')).json;
-  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '6.00', tradeNo: 'T_A', tamper: true });
+  const a = (await create(u, 'p1')).json;
+  const b = (await create(u, 'p1')).json;
+  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '1.00', tradeNo: 'T_A', tamper: true });
   gwOrders.set(b.orderNo, { status: 'TRADE_SUCCESS', amount: '0.01', tradeNo: 'T_B' });
   assert.equal((await call(SITE, 'GET', `/pay/alipay/query?orderNo=${a.orderNo}`, { jar: u.jar })).json.status, 'pending');
   assert.equal((await call(SITE, 'GET', `/pay/alipay/query?orderNo=${b.orderNo}`, { jar: u.jar })).json.status, 'pending');
@@ -379,7 +379,7 @@ test('查单：网关响应被篡改（验签失败）或金额不符时不入�
 test('查单：只能查自己的订单；订单号格式校验', async () => {
   const u1 = await newUser();
   const u2 = await newUser();
-  const { json: o } = await create(u1, 'p6');
+  const { json: o } = await create(u1, 'p1');
   assert.equal((await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`, { jar: u2.jar })).status, 404);
   assert.equal((await call(SITE, 'GET', `/pay/alipay/query?orderNo=${o.orderNo}`)).status, 401);
   assert.equal((await call(SITE, 'GET', `/pay/alipay/query?orderNo=${encodeURIComponent("x' or 1=1 --")}`, { jar: u1.jar })).status, 400);
@@ -387,11 +387,11 @@ test('查单：只能查自己的订单；订单号格式校验', async () => {
 
 test('补单接口 recheck：一次补上该用户所有已付款未入账的订单', async () => {
   const u = await newUser();
-  const a = (await create(u, 'p6')).json;
-  const b = (await create(u, 'p30')).json;
-  const c = (await create(u, 'p6')).json; // 未支付
-  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '6.00', tradeNo: 'T_RA' });
-  gwOrders.set(b.orderNo, { status: 'TRADE_FINISHED', amount: '30.00', tradeNo: 'T_RB' });
+  const a = (await create(u, 'p1')).json;
+  const b = (await create(u, 'p5')).json;
+  const c = (await create(u, 'p1')).json; // 未支付
+  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '1.00', tradeNo: 'T_RA' });
+  gwOrders.set(b.orderNo, { status: 'TRADE_FINISHED', amount: '5.00', tradeNo: 'T_RB' });
   const r = await call(SITE, 'POST', '/pay/alipay/recheck', { jar: u.jar });
   assert.equal(r.status, 200, r.text);
   assert.deepEqual(r.json.paid.map((x) => x.orderNo).sort(), [a.orderNo, b.orderNo].sort());
@@ -405,10 +405,10 @@ test('补单接口 recheck：一次补上该用户所有已付款未入账的订
 
 test('return：验签后查单入账并 302 回站点（?payOrder=订单号）；伪造签名只跳转不入账', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p6', 'mobile');
-  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '6.00', tradeNo: 'T_RET' });
+  const { json: o } = await create(u, 'p1', 'mobile');
+  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '1.00', tradeNo: 'T_RET' });
   const ret = {
-    charset: 'utf-8', out_trade_no: o.orderNo, method: 'alipay.trade.wap.pay.return', total_amount: '6.00', sign: '', trade_no: 'T_RET',
+    charset: 'utf-8', out_trade_no: o.orderNo, method: 'alipay.trade.wap.pay.return', total_amount: '1.00', sign: '', trade_no: 'T_RET',
     auth_app_id: APP_ID, version: '1.0', app_id: APP_ID, sign_type: 'RSA2', seller_id: '2088000000000001', timestamp: '2026-10-02 10:00:00',
   };
   ret.sign = sign(signContent(ret, ['sign', 'sign_type']), aliKeys.privateKey);
@@ -431,9 +431,9 @@ test('return：验签后查单入账并 302 回站点（?payOrder=订单号）�
 
 test('通知 + 查单 + return 同时到达：福币只加一次', async () => {
   const u = await newUser();
-  const { json: o } = await create(u, 'p30');
-  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '30.00', tradeNo: 'T_RACE' });
-  const notify = payNotify(o.orderNo, { total_amount: '30.00', trade_no: 'T_RACE' });
+  const { json: o } = await create(u, 'p5');
+  gwOrders.set(o.orderNo, { status: 'TRADE_SUCCESS', amount: '5.00', tradeNo: 'T_RACE' });
+  const notify = payNotify(o.orderNo, { total_amount: '5.00', trade_no: 'T_RACE' });
   const rs = await Promise.all([
     postNotify(notify), postNotify(notify),
     call(SITE, 'POST', '/pay/alipay/recheck', { jar: u.jar }),
@@ -458,20 +458,20 @@ test('topups 流水：每笔真实支付恰好一条', async () => {
 /* ------------------------------------------------------ 测试价开关 PAY_TEST_PRICES */
 const pricesOf = (r) => r.json.packs.map((p) => [p.id, p.price, p.coins]);
 
-test('PAY_TEST_PRICES 默认关闭：/config 与 /pay/info 是正式价 6/30/98', async () => {
-  assert.deepEqual(pricesOf(await call(SITE, 'GET', '/config')), [['p6', 6, 60], ['p30', 30, 330], ['p98', 98, 1180]]);
+test('PAY_TEST_PRICES 默认关闭：/config 与 /pay/info 是正式价 1/5/10', async () => {
+  assert.deepEqual(pricesOf(await call(SITE, 'GET', '/config')), [['p1', 1, 60], ['p5', 5, 330], ['p10', 10, 1180]]);
   assert.equal((await call(SITE, 'GET', '/pay/info')).json.testPrices, false);
 });
 
 test('PAY_TEST_PRICES 开启：/config 价格变为 0.01/0.02/0.03，福币数量不变', async () => {
-  assert.deepEqual(pricesOf(await call(TESTP, 'GET', '/config')), [['p6', 0.01, 60], ['p30', 0.02, 330], ['p98', 0.03, 1180]]);
+  assert.deepEqual(pricesOf(await call(TESTP, 'GET', '/config')), [['p1', 0.01, 60], ['p5', 0.02, 330], ['p10', 0.03, 1180]]);
   assert.equal((await call(TESTP, 'GET', '/pay/info')).json.testPrices, true);
 });
 
 test('测试价：下单金额（wap 表单 / precreate）用测试价，订单金额以分记', async () => {
   const u = await newUser(TESTP);
   const mk = (pack, device) => call(TESTP, 'POST', '/pay/alipay/create', { body: { pack, device }, jar: u.jar });
-  const expect = { p6: '0.01', p30: '0.02', p98: '0.03' };
+  const expect = { p1: '0.01', p5: '0.02', p10: '0.03' };
   for (const pack of Object.keys(expect)) {
     const w = await mk(pack, 'mobile');
     assert.equal(w.status, 200, w.text);
@@ -479,18 +479,18 @@ test('测试价：下单金额（wap 表单 / precreate）用测试价，订单�
     assert.equal(w.json.amount, expect[pack]);
   }
   const before = gwRequests.length;
-  const q = await mk('p30', 'desktop');
+  const q = await mk('p5', 'desktop');
   assert.equal(q.status, 200, q.text);
   const req = gwRequests.slice(before).find((x) => x.method === 'alipay.trade.precreate');
   assert.equal(JSON.parse(req.biz_content).total_amount, '0.02');
 });
 
-test('测试价：notify 金额按测试价核对 —— 正式价金额被拒，0.03 才入账（福币仍是 1180）', async () => {
+test('测试价：notify 金额按测试价核对 —— 正式价金额 10.00 被拒，0.03 才入账（福币仍是 1180）', async () => {
   const u = await newUser(TESTP);
-  const { json: o } = await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p98', device: 'desktop' }, jar: u.jar });
+  const { json: o } = await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p10', device: 'desktop' }, jar: u.jar });
   const post = (p) => call(TESTP, 'POST', '/pay/alipay/notify', { form: p });
   const coins = async () => (await call(TESTP, 'GET', '/me', { jar: u.jar })).json.user.coins;
-  assert.equal((await post(payNotify(o.orderNo, { total_amount: '98.00' }))).text, 'fail');
+  assert.equal((await post(payNotify(o.orderNo, { total_amount: '10.00' }))).text, 'fail');
   assert.equal((await post(payNotify(o.orderNo, { total_amount: '0.02' }))).text, 'fail');
   assert.equal(await coins(), 0);
   assert.equal((await post(payNotify(o.orderNo, { total_amount: '0.03' }))).text, 'success');
@@ -501,9 +501,9 @@ test('测试价：notify 金额按测试价核对 —— 正式价金额被拒�
 
 test('测试价：查单补单同样按测试价核对金额', async () => {
   const u = await newUser(TESTP);
-  const a = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p6', device: 'desktop' }, jar: u.jar })).json;
-  const b = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p30', device: 'desktop' }, jar: u.jar })).json;
-  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '6.00', tradeNo: 'T_TP_A' }); // 金额是正式价 -> 拒绝
+  const a = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p1', device: 'desktop' }, jar: u.jar })).json;
+  const b = (await call(TESTP, 'POST', '/pay/alipay/create', { body: { pack: 'p5', device: 'desktop' }, jar: u.jar })).json;
+  gwOrders.set(a.orderNo, { status: 'TRADE_SUCCESS', amount: '1.00', tradeNo: 'T_TP_A' }); // 金额是正式价 -> 拒绝
   gwOrders.set(b.orderNo, { status: 'TRADE_SUCCESS', amount: '0.02', tradeNo: 'T_TP_B' });
   const r = await call(TESTP, 'POST', '/pay/alipay/recheck', { jar: u.jar });
   assert.deepEqual(r.json.paid.map((x) => x.orderNo), [b.orderNo]);

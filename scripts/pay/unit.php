@@ -109,14 +109,14 @@ check('schema.sql copies identical', file_get_contents(__DIR__ . '/../../php-bac
 
 // 测试价开关：默认正式价；开启后 0.01/0.02/0.03，福币数量不变
 $packs = static function () { return array_map(static function ($p) { return [$p['id'], $p['coins'], $p['price'], q_pack_cents($p)]; }, q_packs()); };
-check('packs default prices 6/30/98', $packs() === [['p6', 60, 6, 600], ['p30', 330, 30, 3000], ['p98', 1180, 98, 9800]]);
+check('packs default prices 1/5/10 yuan, coins 60/330/1180', $packs() === [['p1', 60, 1, 100], ['p5', 330, 5, 500], ['p10', 1180, 10, 1000]]);
 putenv('QIFU_PAY_TEST_PRICES=1');
 $_ENV['QIFU_PAY_TEST_PRICES'] = '1';
-check('packs test prices 0.01/0.02/0.03', $packs() === [['p6', 60, 0.01, 1], ['p30', 330, 0.02, 2], ['p98', 1180, 0.03, 3]]);
+check('packs test prices 0.01/0.02/0.03', $packs() === [['p1', 60, 0.01, 1], ['p5', 330, 0.02, 2], ['p10', 1180, 0.03, 3]]);
 check('test price amount strings', array_map(static function ($p) { return q_ali_amount(q_pack_cents($p)); }, q_packs()) === ['0.01', '0.02', '0.03']);
 putenv('QIFU_PAY_TEST_PRICES=0');
 $_ENV['QIFU_PAY_TEST_PRICES'] = '0';
-check('PAY_TEST_PRICES=0 means official prices', $packs()[0][3] === 600);
+check('PAY_TEST_PRICES=0 means official prices', $packs()[0][3] === 100);
 
 // 默认的 notify / return 地址固定
 check('default notify url', q_ali_notify_url() === 'http://qifu.laixi.cn/api/index.php?path=/pay/alipay/notify');

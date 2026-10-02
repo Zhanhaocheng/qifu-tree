@@ -90,7 +90,7 @@ async function scenarios(base) {
   await A.get('config', '/api/config');
   await A.get('me anon', '/api/me');
   await A.get('prayers empty', '/api/prayers');
-  for (const [p, b] of [['checkin'], ['pray', { item: 'wood', text: 'x' }], ['terrain', { terrain: 'snow' }], ['topup', { pack: 'p6' }]]) await A.post(`anon ${p}`, `/api/${p}`, b);
+  for (const [p, b] of [['checkin'], ['pray', { item: 'wood', text: 'x' }], ['terrain', { terrain: 'snow' }], ['topup', { pack: 'p1' }]]) await A.post(`anon ${p}`, `/api/${p}`, b);
   await A.post('anon logout', '/api/logout');
   await A.get('unknown route', '/api/nope');
   await A.get('wrong method login', '/api/login');
@@ -205,11 +205,11 @@ async function scenarios(base) {
   await P.post('pray wood 3', '/api/pray', { item: 'wood', text: 'three' });
   await P.post('pray wood broke', '/api/pray', { item: 'wood', text: 'four' });
   await P.post('pray gold no coins', '/api/pray', { item: 'gold', text: 'x' });
-  await P.post('topup p6', '/api/topup', { pack: 'p6' });
+  await P.post('topup p6', '/api/topup', { pack: 'p1' });
   await P.post('pray gold', '/api/pray', { item: 'gold', text: ' 金牌 ' });
   await P.post('pray ribbon', '/api/pray', { item: 'ribbon', text: 'ribbon' });
   await P.post('pray lotus insufficient', '/api/pray', { item: 'lotus', text: 'x' });
-  await P.post('topup p30', '/api/topup', { pack: 'p30' });
+  await P.post('topup p30', '/api/topup', { pack: 'p5' });
   await P.post('pray lantern', '/api/pray', { item: 'lantern', text: 'lantern' });
   await P.post('pray lotus', '/api/pray', { item: 'lotus', text: 'lotus' });
   for (const [label, b] of [
@@ -227,12 +227,12 @@ async function scenarios(base) {
     ['newline text', { item: 'gold', text: 'line1\nline2 "quoted" \\ back/slash <b>' }],
     ['unicode ws trim', { item: 'gold', text: '\u3000全角空格\u3000' }],
   ]) await P.post(`pray ${label}`, '/api/pray', b);
-  await P.post('topup 98', '/api/topup', { pack: 'p98' });
+  await P.post('topup 98', '/api/topup', { pack: 'p10' });
   const S = A.fresh();
   await reg(S, 'stager');
-  await S.post('topup', '/api/topup', { pack: 'p98' });
+  await S.post('topup', '/api/topup', { pack: 'p10' });
   for (let i = 1; i <= 41; i++) {
-    if (i % 10 === 0) await S.post(`topup ${i}`, '/api/topup', { pack: 'p98' });
+    if (i % 10 === 0) await S.post(`topup ${i}`, '/api/topup', { pack: 'p10' });
     await S.post(`stage pray ${i}`, '/api/pray', { item: 'gold', text: `n${i}` });
   }
 
@@ -252,14 +252,14 @@ async function scenarios(base) {
   await T.post('terrain switch current', '/api/terrain', { terrain: cur.terrain });
   const other = ['snow', 'bamboo', 'desert', 'jiangnan', 'mountain'].find((t) => t !== cur.terrain);
   await T.post('terrain unlock broke', '/api/terrain', { terrain: other });
-  await T.post('topup', '/api/topup', { pack: 'p98' });
+  for (let i = 0; i < 4; i++) await T.post(`topup ${i}`, '/api/topup', { pack: 'p10' });
   for (const t of ['snow', 'bamboo', 'desert', 'jiangnan', 'mountain', 'snow', 'bamboo']) await T.post(`terrain ${t}`, '/api/terrain', { terrain: t });
   await T.get('me end', '/api/me');
 
   // ---- S7 充值
   const U = A.fresh();
   await reg(U, 'topper');
-  for (const p of ['p6', 'p30', 'p98', 'p999', undefined, 6]) await U.post(`topup ${p}`, '/api/topup', { pack: p });
+  for (const p of ['p1', 'p5', 'p10', 'p999', undefined, 6]) await U.post(`topup ${p}`, '/api/topup', { pack: p });
 
   // ---- S8 列表
   const B1 = A.fresh();
@@ -289,7 +289,7 @@ async function scenarios(base) {
   await Q.post('test pray wood', '/api/pray', { item: 'wood', text: 'unlimited' });
   await Q.post('test pray gold', '/api/pray', { item: 'gold', text: 'unlimited' });
   for (const t of ['snow', 'bamboo', 'desert']) await Q.post(`test terrain ${t}`, '/api/terrain', { terrain: t });
-  await Q.post('test topup', '/api/topup', { pack: 'p98' });
+  await Q.post('test topup', '/api/topup', { pack: 'p10' });
   await Q.post('test checkin', '/api/checkin');
   await Q.get('test me', '/api/me');
   for (let i = 1; i <= 305; i++) await Q.post(i % 50 === 0 ? `bulk ${i}` : 'bulk', '/api/pray', { item: i % 2 ? 'wood' : 'lotus', text: `b${i}` });
