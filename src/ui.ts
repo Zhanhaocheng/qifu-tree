@@ -1,6 +1,26 @@
 import qrcode from 'qrcode-generator';
-import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
+import {
+  AGE_MAX,
+  AGE_MIN,
+  AVATAR_MAX_BYTES,
+  AVATAR_PRESETS,
+  AVATAR_SIZE,
+  ITEMS,
+  NICKNAME_MAX,
+  STAGES,
+  validateProfile,
+  type AvatarPresetId,
+  type ItemDef,
+  type ItemId,
+  type PrayerTag,
+  type ProfileUpdate,
+  type PublicUser,
+  type TerrainDef,
+  type TerrainId,
+  type TopupPack,
+} from '../shared/game';
 import type { StorageMode } from './api';
+import { avatarEl, avatarInner, clampCrop, displayName, drawCrop, encodeAvatar, loadImage, presetSvg, type CropState } from './avatar';
 import type { AudioState } from './audio';
 import { markReady } from './motion';
 
@@ -22,10 +42,15 @@ const ICONS = {
   shop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M4 8h16l-1.2 11.2a1 1 0 0 1-1 .8H6.2a1 1 0 0 1-1-.8zM8 8a4 4 0 0 1 8 0"/></svg>',
   land: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M2 19 9 7l4 6 3-4 6 10zM16 5.5a1.5 1.5 0 1 0 .01 0"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></svg>',
+  gear: '<svg class="gear" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" d="M10.4 3h3.2l.5 2.4 1.7.7 2.1-1.3 2.3 2.3-1.3 2.1.7 1.7 2.4.5v3.2l-2.4.5-.7 1.7 1.3 2.1-2.3 2.3-2.1-1.3-1.7.7-.5 2.4h-3.2l-.5-2.4-1.7-.7-2.1 1.3-2.3-2.3 1.3-2.1-.7-1.7L3 13.6v-3.2l2.4-.5.7-1.7-1.3-2.1 2.3-2.3 2.1 1.3 1.7-.7z"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4"/></svg>',
+  logout: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 8l4 4-4 4M19 12H9"/></svg>',
+  upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M12 16V5m0 0-4 4m4-4 4 4M5 19h14"/></svg>',
 };
 
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const tweens = new WeakMap<HTMLElement, number>();
+const bumpTimers = new WeakMap<HTMLElement, number>();
 
 /**
  * 数字滚动到新值（easeOutQuart）；delta 提示（+8 / -10）只在 floatDelta 为 true 时浮出。
@@ -45,6 +70,11 @@ export function tweenNumber(el: HTMLElement, to: number, floatDelta = false, qui
     host.classList.remove('bump-up', 'bump-down');
     void host.offsetWidth;
     host.classList.add(to > from ? 'bump-up' : 'bump-down');
+    clearTimeout(bumpTimers.get(host));
+    bumpTimers.set(
+      host,
+      window.setTimeout(() => host.classList.remove('bump-up', 'bump-down'), 1100),
+    );
     if (floatDelta) {
       const tag = document.createElement('i');
       tag.className = `delta ${to > from ? 'up' : 'down'}`;
@@ -71,6 +101,7 @@ export interface HudHandlers {
   onSound: () => void;
   onLogin: () => void;
   onLogout: () => void;
+  onProfile: () => void;
   onCheckin: () => void;
   onPray: () => void;
   onShop: () => void;
@@ -87,12 +118,19 @@ export function mountHud(h: HudHandlers) {
       </div>
       <div class="top-right">
         <div class="sound-wrap"><button class="icon-btn" id="btn-sound" data-sound-toggle aria-label="声音开关" title="声音开关"></button><span class="sound-tip" id="sound-tip" hidden>轻点开启声音</span></div>
+        <div class="menu-wrap" id="settings-wrap" hidden>
+          <button class="icon-btn" id="btn-settings" aria-label="设置" title="设置" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu">${ICONS.gear}</button>
+          <div class="menu" id="settings-menu" role="menu" aria-label="设置" hidden>
+            <button class="menu-item" role="menuitem" tabindex="-1" data-act="profile">${ICONS.edit}<span>编辑个人信息</span></button>
+            <button class="menu-item danger" role="menuitem" tabindex="-1" data-act="logout">${ICONS.logout}<span>退出登录</span></button>
+          </div>
+        </div>
         <div id="user-area"><i class="skeleton skeleton-pill" aria-hidden="true"></i></div>
       </div>
     </header>
     <div class="stats" id="stats" hidden>
       <div class="stat" title="能量：签到获得，用于基础祈福">${ICONS.energy}<b class="num" id="st-energy">0</b><span>能量</span></div>
-      <div class="stat coin" title="福币：充值获得，用于高级道具">${ICONS.coin}<b class="num" id="st-coins">0</b><span>福币</span><button class="mini" id="btn-add-coin" aria-label="充值福币">+</button></div>
+      <div class="stat coin" title="福币：充值获得，用于高级道具">${ICONS.coin}<b class="num" id="st-coins">0</b><span>福币</span></div>
       <div class="stat flame" title="连续签到天数">${ICONS.flame}<b class="num" id="st-streak">0</b><span>天连签</span></div>
     </div>
     <div class="growth" id="growth" hidden><div class="growth-bar"><i id="growth-fill" style="transform:scaleX(0.04)"></i></div><span id="growth-text"></span></div>
@@ -110,7 +148,71 @@ export function mountHud(h: HudHandlers) {
   $('#btn-pray').addEventListener('click', h.onPray);
   $('#btn-shop').addEventListener('click', h.onShop);
   $('#btn-terrain').addEventListener('click', h.onTerrain);
-  $('#btn-add-coin').addEventListener('click', h.onShop);
+
+  const menuWrap = $('#settings-wrap');
+  const menuBtn = $<HTMLButtonElement>('#btn-settings');
+  const menu = $('#settings-menu');
+  const items = () => [...menu.querySelectorAll<HTMLButtonElement>('.menu-item')];
+  let menuOpen = false;
+  let hideTimer = 0;
+  const closeMenu = (refocus = false) => {
+    if (!menuOpen) return;
+    menuOpen = false;
+    menu.classList.remove('open');
+    menuBtn.setAttribute('aria-expanded', 'false');
+    hideTimer = window.setTimeout(() => (menu.hidden = true), 180);
+    document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onMenuKey, true);
+    removeEventListener('resize', onResize);
+    if (refocus) menuBtn.focus();
+  };
+  const onOutside = (e: Event) => {
+    if (!menuWrap.contains(e.target as Node)) closeMenu();
+  };
+  const onResize = () => closeMenu();
+  const onMenuKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      closeMenu(true);
+    } else if (e.key === 'Tab') closeMenu();
+    else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      const list = items();
+      const i = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length;
+      list[next].focus();
+    }
+  };
+  const openMenu = (focusFirst: boolean) => {
+    if (menuOpen) return;
+    clearTimeout(hideTimer);
+    menuOpen = true;
+    menu.hidden = false;
+    void menu.offsetWidth;
+    menu.classList.add('open');
+    menuBtn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onOutside, true);
+    document.addEventListener('keydown', onMenuKey, true);
+    addEventListener('resize', onResize);
+    if (focusFirst) items()[0].focus();
+  };
+  menuBtn.addEventListener('click', (e) => {
+    if (menuOpen) closeMenu();
+    else openMenu(e.detail === 0);
+  });
+  menuBtn.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && !menuOpen) {
+      e.preventDefault();
+      openMenu(true);
+    }
+  });
+  menu.addEventListener('click', (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('.menu-item');
+    if (!item) return;
+    closeMenu();
+    if (item.dataset.act === 'profile') h.onProfile();
+    else h.onLogout();
+  });
   setTimeout(() => ($('#hint').style.opacity = '0'), 9000);
 
   let shownUserId: number | null = null;
@@ -127,6 +229,8 @@ export function mountHud(h: HudHandlers) {
     },
     setUser(user: PublicUser | null) {
       const area = $('#user-area');
+      closeMenu();
+      $('#settings-wrap').hidden = !user;
       if (!user) {
         area.innerHTML = '<button class="login-btn" id="btn-login">登录 / 注册</button>';
         $('#btn-login').addEventListener('click', h.onLogin);
@@ -137,14 +241,14 @@ export function mountHud(h: HudHandlers) {
         $('#btn-checkin').classList.remove('done', 'todo');
         return;
       }
-      area.innerHTML = `<div class="user-pill"><span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span><span class="uname">${esc(user.username)}</span><button class="linkish" id="btn-logout">退出</button></div>`;
-      $('#btn-logout').addEventListener('click', h.onLogout);
+      const name = displayName(user);
+      area.innerHTML = `<div class="user-pill" title="${esc(name)}">${avatarEl(user)}<span class="uname">${esc(name)}</span></div>`;
       $('#stats').hidden = false;
       const same = shownUserId === user.id;
       shownUserId = user.id;
       for (const [id, v] of [['#st-energy', user.energy], ['#st-coins', user.coins], ['#st-streak', user.streak]] as const) {
         const el = $(id);
-        if (same) tweenNumber(el, v, id !== '#st-streak');
+        if (same) tweenNumber(el, v, true);
         else {
           el.dataset.v = '0';
           tweenNumber(el, v, false, true);
@@ -576,7 +680,7 @@ export function showPopup(tag: PrayerTag | null, x: number, y: number) {
     return;
   }
   const item = ITEMS.find((i) => i.id === tag.itemType)!;
-  el.innerHTML = `<div class="popup-head"><i class="swatch ${item.glow ? 'glow' : ''}" style="--c:${item.color}"></i><b>${esc(tag.username)}${tag.mine ? '（我）' : ''}</b><small>${item.name} · ${timeFmt.format(tag.createdAt)}</small></div><p>${esc(tag.text)}</p>`;
+  el.innerHTML = `<div class="popup-head"><i class="swatch ${item.glow ? 'glow' : ''}" style="--c:${item.color}"></i><b>${esc(tag.nickname || tag.username)}${tag.mine ? '（我）' : ''}</b><small>${item.name} · ${timeFmt.format(tag.createdAt)}</small></div><p>${esc(tag.text)}</p>`;
   el.hidden = false;
   el.style.animation = 'none';
   void el.offsetWidth;
@@ -595,4 +699,201 @@ export async function hideLoading() {
   l.classList.add('hide');
   markReady();
   setTimeout(() => l.remove(), 800);
+}
+
+/* ------------------------------------------------------------------ 个人资料 */
+
+const CROP_BOX = 224;
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+
+export function openProfile(user: PublicUser, onSubmit: (update: Required<ProfileUpdate>) => Promise<string | null>) {
+  let avatar: string | null = user.avatar;
+  let custom: string | null = user.avatar && !user.avatar.startsWith('preset:') ? user.avatar : null;
+  const d = openDialog(
+    '个人资料',
+    `<form class="form profile-form" autocomplete="off" novalidate>
+      <div class="profile-head">
+        <span class="avatar xl" id="pf-preview" aria-hidden="true"></span>
+        <div class="profile-id"><b id="pf-name"></b><small>登录名 <em>${esc(user.username)}</em>，用于登录，不可修改</small></div>
+      </div>
+      <label>昵称<input name="nickname" maxlength="${NICKNAME_MAX}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="1-${NICKNAME_MAX} 位，留空则使用登录名" value="${esc(user.nickname === user.username ? '' : user.nickname)}" /></label>
+      <label>年龄<span class="opt">（选填）</span><input name="age" type="number" inputmode="numeric" min="${AGE_MIN}" max="${AGE_MAX}" step="1" placeholder="${AGE_MIN}-${AGE_MAX}，可留空" value="${user.age ?? ''}" /></label>
+      <div class="avatar-pick">
+        <span class="pick-title">头像</span>
+        <div class="avatar-grid" role="group" aria-label="选择头像"></div>
+        <input type="file" name="file" accept="image/*" hidden />
+        <p class="fine">上传的图片会先裁成 ${AVATAR_SIZE}×${AVATAR_SIZE} 并压缩（不超过 ${AVATAR_MAX_BYTES / 1024} KB）。</p>
+      </div>
+      <p class="form-error" role="alert" hidden></p>
+      <button class="btn primary block" type="submit">保存</button>
+    </form>
+    <div class="crop" hidden>
+      <p class="crop-tip">拖动图片调整位置，滑块或滚轮缩放</p>
+      <div class="crop-stage"><canvas class="crop-canvas" width="${CROP_BOX}" height="${CROP_BOX}" aria-label="头像裁剪区域"></canvas><i class="crop-ring" aria-hidden="true"></i></div>
+      <label class="crop-zoom">缩放<input type="range" min="1" max="4" step="0.01" value="1" aria-label="缩放" /></label>
+      <div class="crop-actions"><button type="button" class="btn" data-crop-cancel>取消</button><button type="button" class="btn primary" data-crop-ok>使用这张</button></div>
+    </div>`,
+  );
+  const form = $<HTMLFormElement>('.profile-form', d.el);
+  const nick = $<HTMLInputElement>('input[name=nickname]', d.el);
+  const age = $<HTMLInputElement>('input[name=age]', d.el);
+  const fileInput = $<HTMLInputElement>('input[name=file]', d.el);
+  const grid = $('.avatar-grid', d.el);
+  const err = $('.form-error', d.el);
+  const submit = $<HTMLButtonElement>('button[type=submit]', d.el);
+  const cropEl = $('.crop', d.el);
+  const showErr = (m: string | null) => {
+    err.textContent = m ?? '';
+    err.hidden = !m;
+  };
+
+  const effectiveName = () => nick.value.trim().replace(/ {2,}/g, ' ') || user.username;
+  const paintPreview = () => {
+    $('#pf-preview', d.el).innerHTML = avatarInner(avatar, effectiveName());
+    $('#pf-name', d.el).textContent = effectiveName();
+  };
+  const paintGrid = () => {
+    const opt = (key: string, inner: string, label: string, selected: boolean) =>
+      `<button type="button" class="av-opt${selected ? ' selected' : ''}" data-av="${key}" aria-pressed="${selected}" aria-label="${esc(label)}" title="${esc(label)}"><span class="avatar">${inner}</span></button>`;
+    grid.innerHTML =
+      opt('', `<b class="initial">${esc([...effectiveName()][0]?.toUpperCase() ?? '?')}</b>`, '默认（首字母）', avatar === null) +
+      AVATAR_PRESETS.map((p) => opt(`preset:${p.id}`, presetSvg(p.id as AvatarPresetId), p.name, avatar === `preset:${p.id}`)).join('') +
+      (custom ? opt('custom', avatarInner(custom, ''), '我上传的头像', avatar === custom) : '') +
+      `<button type="button" class="av-opt upload" data-upload aria-label="${custom ? '重新上传图片' : '上传图片'}" title="${custom ? '重新上传图片' : '上传图片'}"><span class="avatar">${ICONS.upload}</span><small>上传</small></button>`;
+  };
+  const paint = () => {
+    paintGrid();
+    paintPreview();
+  };
+  paint();
+  nick.addEventListener('input', () => {
+    paintPreview();
+    if (avatar === null) grid.querySelector('.initial')!.textContent = [...effectiveName()][0]?.toUpperCase() ?? '?';
+  });
+  grid.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.av-opt');
+    if (!btn) return;
+    if (btn.hasAttribute('data-upload')) {
+      fileInput.value = '';
+      fileInput.click();
+      return;
+    }
+    const key = btn.dataset.av!;
+    avatar = key === '' ? null : key === 'custom' ? custom : key;
+    showErr(null);
+    paint();
+  });
+
+  /* 裁剪 */
+  const canvas = $<HTMLCanvasElement>('.crop-canvas', d.el);
+  const zoomInput = $<HTMLInputElement>('.crop-zoom input', d.el);
+  const ctx = canvas.getContext('2d')!;
+  let img: HTMLImageElement | null = null;
+  let view = { w: 1, h: 1 };
+  let crop: CropState = { zoom: 1, x: 0, y: 0 };
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = canvas.height = Math.round(CROP_BOX * dpr);
+  const redraw = () => {
+    if (!img) return;
+    crop = clampCrop(view, CROP_BOX, crop);
+    drawCrop(ctx, img, view, CROP_BOX, crop, canvas.width);
+  };
+  const setZoom = (z: number) => {
+    // 以视窗中心为锚点缩放：偏移按比例缩放
+    const nz = Math.min(4, Math.max(1, z));
+    const r = nz / crop.zoom;
+    crop = clampCrop(view, CROP_BOX, { zoom: nz, x: crop.x * r, y: crop.y * r });
+    zoomInput.value = String(nz);
+    redraw();
+  };
+  const leaveCrop = () => {
+    img = null;
+    cropEl.hidden = true;
+    form.hidden = false;
+  };
+  fileInput.addEventListener('change', async () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) return showErr('请选择图片文件');
+    if (f.size > MAX_UPLOAD_BYTES) return showErr('图片太大了，请选择 12 MB 以内的图片');
+    try {
+      img = await loadImage(f);
+    } catch {
+      img = null;
+      return showErr('这张图片无法读取，请换一张（支持 JPG、PNG、WebP 等常见格式）');
+    }
+    showErr(null);
+    view = { w: img.naturalWidth, h: img.naturalHeight };
+    crop = { zoom: 1, x: 0, y: 0 };
+    zoomInput.value = '1';
+    form.hidden = true;
+    cropEl.hidden = false;
+    redraw();
+    $<HTMLButtonElement>('[data-crop-ok]', d.el).focus();
+  });
+  zoomInput.addEventListener('input', () => setZoom(Number(zoomInput.value)));
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    setZoom(crop.zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08));
+  }, { passive: false });
+  let drag: { id: number; x: number; y: number } | null = null;
+  const scale = () => CROP_BOX / canvas.getBoundingClientRect().width;
+  canvas.addEventListener('pointerdown', (e) => {
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    const k = scale();
+    crop = { ...crop, x: crop.x + (e.clientX - drag.x) * k, y: crop.y + (e.clientY - drag.y) * k };
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    redraw();
+  });
+  const endDrag = () => (drag = null);
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  $('[data-crop-cancel]', d.el).addEventListener('click', leaveCrop);
+  $('[data-crop-ok]', d.el).addEventListener('click', () => {
+    if (!img) return;
+    const out = document.createElement('canvas');
+    out.width = out.height = AVATAR_SIZE;
+    drawCrop(out.getContext('2d')!, img, view, CROP_BOX, crop, AVATAR_SIZE);
+    const url = encodeAvatar(out);
+    leaveCrop();
+    if (!url) return showErr('图片压缩后仍然太大，请换一张更简单的图片');
+    custom = url;
+    avatar = url;
+    showErr(null);
+    paint();
+  });
+  // 裁剪过程中按 Esc 先退出裁剪，而不是直接关掉整个弹窗
+  d.el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !cropEl.hidden) {
+      e.stopPropagation();
+      leaveCrop();
+    }
+  }, true);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const patch = { nickname: nick.value, avatar, age: age.value.trim() === '' ? null : Number(age.value) };
+    const check = validateProfile(patch);
+    if (!check.ok) return showErr(check.error);
+    showErr(null);
+    submit.disabled = true;
+    submit.textContent = '保存中…';
+    let message: string | null;
+    try {
+      message = await onSubmit({ nickname: patch.nickname, avatar, age: patch.age });
+    } catch {
+      message = '保存失败，请稍后重试';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = '保存';
+    }
+    if (message) showErr(message);
+    else d.close();
+  });
+  setTimeout(() => nick.focus({ preventScroll: true }), 60);
 }
