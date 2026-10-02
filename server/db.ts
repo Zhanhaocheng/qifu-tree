@@ -1,6 +1,7 @@
 import { createClient, type Client, type InArgs, type Transaction } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SMS_SCHEMA } from './sms.js';
 import { ensureTestAccount, testAccountFromEnv } from './testAccount.js';
 
 export type DbMode = 'local' | 'turso' | 'demo';
@@ -77,6 +78,7 @@ export async function createDb(url: string, mode: DbMode, authToken?: string): P
   if (url.startsWith('file:')) fs.mkdirSync(path.dirname(url.slice('file:'.length)), { recursive: true });
   const client = createClient({ url, authToken });
   for (const stmt of SCHEMA) await client.execute(stmt);
+  for (const stmt of SMS_SCHEMA) await client.execute(stmt);
   await client.execute('ALTER TABLE users ADD COLUMN terrain TEXT').catch(() => undefined);
   await client.execute('PRAGMA foreign_keys = ON').catch(() => undefined);
   return {

@@ -57,6 +57,10 @@ vercel --prod
 
 前端构建变量：`VITE_API_BASE`（跨域接口地址，默认同域）、`VITE_API_STYLE=query`（使用 `/api/index.php?path=/xxx`）。前端请求有 12 秒超时，GET 自动重试 2 次，POST 不重试。
 
+## 手机短信验证码登录
+
+登录弹窗支持「手机号 + 6 位短信验证码」（首次验证自动注册），与用户名密码并存。短信平台为美联软通 5C，凭据只放服务器 `config.php`（PHP）/ 环境变量（Vercel）：`SMS_USERNAME`、`SMS_PASSWORD_MD5`、`SMS_APIKEY`、`SMS_SIGN`。没配置时「短信登录」标签自动隐藏；开发时设 `SMS_MOCK=1`（可加 `SMS_MOCK_OUTBOX=/tmp/outbox.jsonl`）不会真实发送，短信内容写到该文件或控制台。真实发送自测：`scripts/sms-send-test.sh`。详见 `php-backend/php-deploy-guide.md` 第 12 节。
+
 ## 内置测试账号
 
 每次启动（含 Vercel 冷启动、演示模式内存重置、本地 SQLite、Turso）都会幂等地确保下面的账号存在，登录时也会再次校验：

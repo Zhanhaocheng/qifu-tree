@@ -101,3 +101,34 @@ CREATE TABLE IF NOT EXISTS pay_orders (
   KEY idx_pay_orders_user (user_id, status),
   CONSTRAINT fk_pay_orders_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 手机号短信验证码登录（独立于 users 表，不改动其任何字段）。
+-- 代码里也会在首次访问 /sms/* 时自动执行同样的 CREATE TABLE IF NOT EXISTS，老站点不重新安装也能用。
+-- sms_codes 只存验证码的 HMAC 哈希（不存明文）、过期时间、尝试次数；status：0 占位 / 1 已发送 / 2 发送失败。
+CREATE TABLE IF NOT EXISTS sms_codes (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  phone CHAR(11) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  purpose VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  code_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  ip VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+  user_id BIGINT NULL,
+  status TINYINT NOT NULL DEFAULT 0,
+  attempts INT NOT NULL DEFAULT 0,
+  expires_at BIGINT NOT NULL,
+  used_at BIGINT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_sms_codes_phone (phone, created_at),
+  KEY idx_sms_codes_ip (ip, created_at),
+  KEY idx_sms_codes_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 手机号与账号的绑定（一个账号一个手机号，一个手机号只属于一个账号）
+CREATE TABLE IF NOT EXISTS user_phones (
+  user_id BIGINT NOT NULL,
+  phone CHAR(11) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id),
+  UNIQUE KEY uq_user_phones_phone (phone),
+  CONSTRAINT fk_user_phones_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

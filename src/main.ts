@@ -1,14 +1,15 @@
 import './styles/fonts.css';
 import './style.css';
 import './styles/motion.css';
+import './styles/sms.css';
 import { STAGES, TERRAINS, stageOf, type PublicUser, type PrayerTag, type TerrainId } from '../shared/game';
-import { api, ApiError, type Config, type PayCreateResponse, type PayInfo, type PayOrder } from './api';
+import { api, ApiError, type Config, type PayCreateResponse, type PayInfo, type PayOrder, type SmsInfo } from './api';
 import { AudioEngine } from './audio';
 import { createFx } from './fx';
 import { initMotion } from './motion';
 import { QifuScene, type Quality } from './scene/scene';
 import { STAGE_PARAMS } from './scene/tree';
-import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, openTerrain, showPopup, toast } from './ui';
+import { closeDialog, hideLoading, mountHud, openAuth, openBindPhone, openPray, openShop, openTerrain, showPopup, toast } from './ui';
 
 const params = new URLSearchParams(location.search);
 const hourParam = params.get('hour');
@@ -24,6 +25,7 @@ document.addEventListener('dblclick', (e) => e.preventDefault());
 let user: PublicUser | null = null;
 let config: Config | null = null;
 let payInfo: PayInfo | null = null;
+let smsInfo: Promise<SmsInfo | null> = Promise.resolve(null);
 let total = 0;
 
 const hud = mountHud({
@@ -142,22 +144,84 @@ function handleError(e: unknown) {
   toast(e instanceof ApiError ? e.message : '出错了，请稍后重试', 'error');
 }
 
-function showAuth() {
-  openAuth(async (mode, username, password) => {
+function afterAuth(res: { user: PublicUser }, registered: boolean) {
+  user = res.user;
+  audio.click();
+  refresh();
+  loadTags().catch(() => undefined);
+  toast(registered ? `欢迎，${user.username}！已赠送 30 点能量` : `欢迎回来，${user.username}`, 'success');
+}
+
+async function showAuth() {
+  const info = await Promise.race([smsInfo, new Promise<null>((r) => setTimeout(() => r(null), 800))]);
+  openAuth(
+    async (mode, username, password) => {
+      try {
+        const res = mode === 'login' ? await api.login(username, password) : await api.register(username, password);
+        afterAuth(res, mode === 'register');
+        return null;
+      } catch (e) {
+        audio.error();
+        return e instanceof ApiError ? e.message : '操作失败';
+      }
+    },
+    info
+      ? {
+          info,
+          send: smsSend('login'),
+          login: async (phone, code) => {
+            try {
+              const res = await api.smsLogin(phone, code);
+              afterAuth(res, res.registered);
+              return null;
+            } catch (e) {
+              audio.error();
+              return e instanceof ApiError ? e.message : '操作失败';
+            }
+          },
+        }
+      : undefined,
+  );
+}
+
+function smsSend(purpose: 'login' | 'bind') {
+  return async (phone: string) => {
     try {
-      const res = mode === 'login' ? await api.login(username, password) : await api.register(username, password);
-      user = res.user;
-      audio.click();
-      refresh();
-      loadTags().catch(() => undefined);
-      toast(mode === 'register' ? `欢迎，${user.username}！已赠送 30 点能量` : `欢迎回来，${user.username}`, 'success');
-      return null;
+      const res = await api.smsSend(phone, purpose);
+      return { ok: true, cooldown: res.resendSeconds };
     } catch (e) {
       audio.error();
-      return e instanceof ApiError ? e.message : '操作失败';
+      if (e instanceof ApiError && e.status === 401 && purpose === 'bind') {
+        handleError(e);
+        return { ok: false };
+      }
+      return { ok: false, message: e instanceof ApiError ? e.message : '发送失败，请稍后重试', cooldown: e instanceof ApiError ? e.retryAfter : undefined };
     }
-  });
+  };
 }
+
+/** 设置菜单里的「绑定手机号」只需派发 window.dispatchEvent(new Event('qifu:bind-phone')) */
+window.addEventListener('qifu:bind-phone', async () => {
+  if (!user) return showAuth();
+  const info = await smsInfo;
+  if (!info) return toast('手机号绑定暂未开放', 'info');
+  const current = await api.smsPhone().then((r) => r.phone).catch(() => null);
+  openBindPhone({
+    info,
+    current,
+    send: smsSend('bind'),
+    bind: async (phone, code) => {
+      try {
+        const res = await api.smsBind(phone, code);
+        toast(`已绑定手机号 ${res.phone}`, 'success');
+        return null;
+      } catch (e) {
+        audio.error();
+        return e instanceof ApiError ? e.message : '操作失败';
+      }
+    },
+  });
+});
 
 async function submitPrayer(item: Parameters<typeof api.pray>[0], text: string): Promise<string | null> {
   try {
@@ -374,6 +438,7 @@ async function resumePayments() {
 
 async function boot() {
   try {
+    smsInfo = api.smsInfo();
     const [cfg, me, pay] = await Promise.all([api.config(), api.me(), api.payInfo()]);
     config = cfg;
     payInfo = pay;

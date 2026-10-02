@@ -1,0 +1,45 @@
+/* ==========================================================================
+   手机号 + 短信验证码：登录弹窗的第三个标签、6 格验证码输入、获取验证码倒计时
+   ========================================================================== */
+
+.pane { display: flex; flex-direction: column; gap: 14px; }
+.pane[hidden] { display: none; }
+.tabs.tabs-3 .tab { letter-spacing: 0.14em; text-indent: 0.14em; font-size: 15px; }
+
+.phone-field { display: flex; align-items: center; }
+.phone-field input[name='phone'] { padding-left: 58px; padding-right: 118px; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.phone-field .cc { position: absolute; left: 13px; z-index: 1; padding-right: 10px; font-size: 15px; color: var(--ink-dim); border-right: 1px solid var(--glass-border); line-height: 20px; pointer-events: none; }
+.send-code { position: absolute; right: 6px; top: 50%; z-index: 1; min-width: 96px; height: 34px; margin-top: -17px; padding: 0 10px; border-radius: 9px; border: 1px solid rgba(242, 193, 78, 0.45); background: rgba(242, 193, 78, 0.14); color: var(--gold-soft); font-size: 14px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: background-color var(--dur-2), color var(--dur-2), border-color var(--dur-2), opacity var(--dur-2), transform var(--dur-2) var(--ease); }
+.send-code:disabled { cursor: not-allowed; opacity: 0.55; background: rgba(255, 255, 255, 0.05); border-color: var(--glass-border); color: var(--ink-dim); }
+.send-code:not(:disabled):active { transform: scale(0.96); }
+@media (hover: hover) and (pointer: fine) {
+  .send-code:not(:disabled):hover { background: rgba(242, 193, 78, 0.24); border-color: rgba(242, 193, 78, 0.7); }
+}
+.send-code:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.otp-wrap { display: flex; flex-direction: column; gap: 7px; }
+.otp-label { font-size: var(--fs-sm); letter-spacing: var(--ls-wide); color: var(--ink-dim); }
+.otp { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.otp-cell { width: 100%; min-width: 0; height: 52px; padding: 0; text-align: center; font-size: 24px; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums; border-radius: 12px; caret-color: var(--gold); }
+.otp-cell.filled { border-color: rgba(242, 193, 78, 0.55); background: rgba(242, 193, 78, 0.08); color: var(--gold-soft); }
+.otp-cell:focus { transform: translateY(-1px); }
+.otp.shake .otp-cell { border-color: rgba(224, 82, 63, 0.85); animation: otp-shake 0.46s var(--ease) both; }
+@keyframes otp-shake { 15% { transform: translateX(-6px); } 35% { transform: translateX(5px); } 55% { transform: translateX(-3px); } 75% { transform: translateX(2px); } }
+
+.sms-hint { margin: -4px 0 0; min-height: 1.4em; font-size: 13px; line-height: 1.5; color: var(--ink-dim); }
+.sms-hint:empty { display: none; }
+.sms-hint.mock { color: #ffcf7a; }
+.bind-current b { color: var(--gold-soft); font-weight: 600; letter-spacing: 0.05em; }
+
+@media (max-width: 380px) {
+  .otp { gap: 6px; }
+  .otp-cell { height: 48px; font-size: 22px; }
+  .send-code { min-width: 88px; font-size: 13px; }
+  .phone-field input[name='phone'] { padding-right: 106px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .otp.shake .otp-cell { animation: none; }
+  .otp-cell, .send-code { transition: none; }
+  .otp-cell:focus { transform: none; }
+}
