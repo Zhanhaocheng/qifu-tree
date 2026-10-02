@@ -102,6 +102,9 @@ html.ui-ready .tag-count, html.ui-ready .hint { animation: fade-in 1s var(--ease
 .form.swap > :not(.tabs) { animation: swap-in 0.34s var(--ease) both; }
 @keyframes swap-in { from { opacity: 0.2; transform: translateY(6px); } }
 
+/* 支付扫码面板（支付宝）显示时的过渡 */
+.pay-qr:not([hidden]) { animation: swap-in 0.45s var(--ease) both; }
+
 /* 手机：底部弹出 / 横屏：右侧抽屉 */
 @media (max-width: 720px) {
   .dialog, .dialog.wide { opacity: 1; transform: translateY(100%); transition: transform 0.46s cubic-bezier(0.2, 0.9, 0.2, 1); }
