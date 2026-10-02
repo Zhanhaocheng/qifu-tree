@@ -1,8 +1,11 @@
+import './styles/fonts.css';
 import './style.css';
+import './styles/motion.css';
 import { STAGES, TERRAINS, stageOf, type PublicUser, type PrayerTag, type TerrainId } from '../shared/game';
 import { api, ApiError, type Config, type PayCreateResponse, type PayInfo, type PayOrder } from './api';
 import { AudioEngine } from './audio';
 import { createFx } from './fx';
+import { initMotion } from './motion';
 import { QifuScene, type Quality } from './scene/scene';
 import { STAGE_PARAMS } from './scene/tree';
 import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, openTerrain, showPopup, toast } from './ui';
@@ -13,6 +16,7 @@ const qualityParam = params.get('q') as Quality | null;
 const stageParam = params.get('stage');
 const terrainParam = params.get('terrain') as TerrainId | null;
 
+initMotion();
 const audio = new AudioEngine();
 const fx = createFx(audio);
 for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, (e) => e.preventDefault());
@@ -115,9 +119,11 @@ const scene = new QifuScene(
       if (audio.terrain !== s.terrain) audio.setTerrain(s.terrain);
     },
     onAnimal: (kind, pos, cam) => audio.animal(kind, pos.distanceTo(cam), pos.x - cam.x),
+    onQuality: (q) => (document.documentElement.dataset.gfx = q),
   },
   { quality: ['low', 'medium', 'high'].includes(qualityParam ?? '') ? (qualityParam as Quality) : undefined, hour: hourParam !== null ? Number(hourParam) : null, terrain: TERRAINS.some((t) => t.id === terrainParam) ? (terrainParam as TerrainId) : undefined },
 );
+document.documentElement.dataset.gfx = qualityParam && ['low', 'medium', 'high'].includes(qualityParam) ? qualityParam : matchMedia('(pointer: coarse)').matches || innerWidth < 720 ? 'medium' : 'high';
 (window as unknown as { __qifu: unknown }).__qifu = { scene, audio };
 
 function showBusy(on: boolean) {
@@ -382,6 +388,7 @@ async function boot() {
   } catch {
     toast('无法连接服务器，正在显示离线的树', 'error');
     hud.setUser(null);
+    hud.clearTagCount();
     hud.setStage(0, '离线');
   }
   hideLoading();
