@@ -388,6 +388,9 @@ function h_topup()
     if (!$u) {
         return q_fail('请先登录', 401);
     }
+    if (q_pay_mode() !== 'demo') {
+        return q_fail('已启用支付宝充值，请使用支付宝支付', 403);
+    }
     $b = q_request_body();
     $pack = q_find(q_packs(), $b['pack'] ?? null);
     if (!$pack) {
@@ -442,6 +445,13 @@ function q_dispatch(): void
         'POST /terrain' => 'h_terrain',
         'POST /topup' => 'h_topup',
         'GET /prayers' => 'h_prayers',
+        'GET /pay/info' => 'h_pay_info',
+        'POST /pay/alipay/create' => 'h_pay_create',
+        'GET /pay/alipay/query' => 'h_pay_query',
+        'POST /pay/alipay/recheck' => 'h_pay_recheck',
+        'POST /pay/alipay/notify' => 'h_pay_notify',
+        'GET /pay/alipay/notify' => 'h_pay_notify',
+        'GET /pay/alipay/return' => 'h_pay_return',
     ];
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     if ($method === 'HEAD') {

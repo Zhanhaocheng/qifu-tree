@@ -44,7 +44,7 @@ await api('checkin', 'POST', '/api/checkin', 200, { cookie: reg.cookie });
 await api('checkin again', 'POST', '/api/checkin', 409, { cookie: reg.cookie });
 await api('pray', 'POST', '/api/pray', 200, { cookie: reg.cookie, body: { item: 'wood', text: '愿平安' } });
 await api('pray broke', 'POST', '/api/pray', 402, { cookie: reg.cookie, body: { item: 'lotus', text: 'x' } });
-await api('topup', 'POST', '/api/topup', 200, { cookie: reg.cookie, body: { pack: 'p30' } });
+await api('topup', 'POST', '/api/topup', 200, { cookie: reg.cookie, body: { pack: 'p10' } });
 await api('terrain', 'POST', '/api/terrain', 200, { cookie: reg.cookie, body: { terrain: 'snow' } });
 const pl = await api('prayers', 'GET', '/api/prayers', 200, { cookie: reg.cookie });
 check('prayers has my tag', pl.json?.tags?.some((t) => t.mine && t.text === '愿平安'));

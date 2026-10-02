@@ -1,6 +1,6 @@
 import './style.css';
 import { STAGES, TERRAINS, stageOf, type PublicUser, type PrayerTag, type TerrainId } from '../shared/game';
-import { api, ApiError, type Config } from './api';
+import { api, ApiError, type Config, type PayCreateResponse, type PayInfo, type PayOrder } from './api';
 import { AudioEngine } from './audio';
 import { createFx } from './fx';
 import { QifuScene, type Quality } from './scene/scene';
@@ -19,6 +19,7 @@ for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEv
 document.addEventListener('dblclick', (e) => e.preventDefault());
 let user: PublicUser | null = null;
 let config: Config | null = null;
+let payInfo: PayInfo | null = null;
 let total = 0;
 
 const hud = mountHud({
@@ -83,7 +84,8 @@ const hud = mountHud({
     audio.click();
     if (!user) return showAuth();
     if (!config) return;
-    const shop = openShop(user, config.packs, async (pack) => {
+    const shop: ReturnType<typeof openShop> = openShop(user, config.packs, payInfo, async (pack) => {
+      if (payInfo?.mode === 'alipay') return buyWithAlipay(pack, shop);
       try {
         const res = await api.topup(pack.id);
         user = res.user;
@@ -206,10 +208,169 @@ async function loadTags(): Promise<PrayerTag[]> {
   return res.tags;
 }
 
+/* ------------------------------------------------------------ 支付宝充值 */
+
+const PAY_SEEN_KEY = 'qifu_pay_seen';
+const PAY_PENDING_KEY = 'qifu_pay_pending';
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function readList(key: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStore(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* 隐私模式 */
+  }
+}
+
+const isMobileDevice = () =>
+  /Android|iPhone|iPad|iPod|Mobile|HarmonyOS|OpenHarmony/i.test(navigator.userAgent) ||
+  (matchMedia('(pointer: coarse)').matches && Math.min(innerWidth, innerHeight) < 820);
+
+/** 已到账的订单只播放一次特效（QR 轮询、return 回跳、补单可能先后发现同一笔） */
+function announcePaid(order: PayOrder, shop?: ReturnType<typeof openShop>): boolean {
+  if (order.user) user = order.user;
+  refresh();
+  shop?.setCoins(user?.coins ?? 0);
+  if (localStorage.getItem(PAY_PENDING_KEY) === order.orderNo) writeStore(PAY_PENDING_KEY, null);
+  if (readList(PAY_SEEN_KEY).includes(order.orderNo)) return false;
+  writeStore(PAY_SEEN_KEY, JSON.stringify([...readList(PAY_SEEN_KEY), order.orderNo].slice(-30)));
+  const label = config?.packs.find((p) => p.id === order.packId)?.label ?? '福币';
+  fx.payment(order.coins, user?.coins ?? 0, label);
+  toast(`支付成功：+${order.coins} 福币`, 'success');
+  return true;
+}
+
+async function pollOrder(orderNo: string, shouldStop: () => boolean, maxMs: number): Promise<PayOrder | null> {
+  const t0 = Date.now();
+  let last: PayOrder | null = null;
+  while (!shouldStop() && Date.now() - t0 < maxMs) {
+    try {
+      last = await api.payQuery(orderNo);
+      if (last.status !== 'pending') return last;
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 404)) return last;
+    }
+    await sleep(2500);
+  }
+  return last;
+}
+
+function submitPayForm(form: NonNullable<PayCreateResponse['form']>) {
+  const f = document.createElement('form');
+  f.method = 'POST';
+  f.action = form.action;
+  f.acceptCharset = 'utf-8';
+  f.style.display = 'none';
+  for (const [name, value] of Object.entries(form.fields)) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    f.appendChild(input);
+  }
+  document.body.appendChild(f);
+  f.submit();
+}
+
+async function buyWithAlipay(pack: { id: string; label: string; coins: number }, shop: ReturnType<typeof openShop>): Promise<string | undefined> {
+  if (!payInfo?.ready) return '支付暂未开放，请稍后再试';
+  const mobile = isMobileDevice();
+  if (mobile && /MicroMessenger/i.test(navigator.userAgent)) {
+    return '微信内无法唤起支付宝，请点右上角「…」用浏览器打开本页后再充值';
+  }
+  let order: PayCreateResponse;
+  try {
+    order = await api.payCreate(pack.id, mobile ? 'mobile' : 'desktop');
+  } catch (e) {
+    audio.error();
+    return e instanceof ApiError ? e.message : '下单失败，请稍后重试';
+  }
+  writeStore(PAY_PENDING_KEY, order.orderNo);
+  if (order.form) {
+    toast('正在前往支付宝…');
+    await sleep(150);
+    submitPayForm(order.form);
+    return undefined;
+  }
+  if (!order.qrCode) return '下单失败，请稍后重试';
+
+  let stopped = false;
+  const finish = (res: PayOrder | null) => {
+    if (res?.status === 'paid') {
+      announcePaid(res, shop);
+      shop.hideQr();
+    } else if (res?.status === 'closed') shop.setPayStatus('订单已关闭，请返回重新下单');
+  };
+  shop.showQr(
+    { text: order.qrCode, amount: order.amount, label: pack.label, coins: pack.coins },
+    {
+      onCancel: () => {
+        stopped = true;
+        writeStore(PAY_PENDING_KEY, null);
+      },
+      onCheck: async () => {
+        shop.setPayStatus('正在查询支付结果…');
+        try {
+          const res = await api.payQuery(order.orderNo);
+          if (res.status === 'pending') shop.setPayStatus('还没有收到付款，请完成扫码支付');
+          else finish(res);
+        } catch (e) {
+          shop.setPayStatus(e instanceof ApiError ? e.message : '查询失败，请稍后重试');
+        }
+      },
+    },
+  );
+  void pollOrder(order.orderNo, () => stopped || !shop.isOpen(), 10 * 60 * 1000).then((res) => {
+    if (stopped) return;
+    if (res && res.status !== 'pending') finish(res);
+    else if (shop.isOpen()) shop.setPayStatus('尚未收到付款。如已付款请点「我已支付，刷新」，福币稍后也会自动到账');
+  });
+  return undefined;
+}
+
+/** 回到站点后确认支付结果：支付宝 return 页带回 ?payOrder=，或上次留下未确认的订单 */
+async function resumePayments() {
+  const params = new URLSearchParams(location.search);
+  const fromReturn = params.get('payOrder');
+  if (fromReturn) {
+    params.delete('payOrder');
+    const rest = params.toString();
+    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+  }
+  if (payInfo?.mode !== 'alipay' || !user) return;
+  const orderNo = fromReturn ?? localStorage.getItem(PAY_PENDING_KEY);
+  if (orderNo && /^[A-Za-z0-9_]{6,40}$/.test(orderNo)) {
+    if (fromReturn) toast('正在确认支付结果…');
+    const res = await pollOrder(orderNo, () => false, fromReturn ? 20000 : 100);
+    if (res?.status === 'paid') return void announcePaid(res);
+    if (fromReturn) toast(res?.status === 'closed' ? '订单已关闭，未扣款' : '尚未收到付款结果，到账后福币会自动增加', res?.status === 'closed' ? 'error' : undefined);
+    else if (res?.status === 'closed') writeStore(PAY_PENDING_KEY, null);
+  }
+  try {
+    const r = await api.payRecheck();
+    r.paid.forEach((o) => announcePaid({ ...o, user: r.user }));
+    user = r.user;
+    refresh();
+  } catch {
+    /* 补单是尽力而为 */
+  }
+}
+
 async function boot() {
   try {
-    const [cfg, me] = await Promise.all([api.config(), api.me()]);
+    const [cfg, me, pay] = await Promise.all([api.config(), api.me(), api.payInfo()]);
     config = cfg;
+    payInfo = pay;
     user = me.user;
     hud.setMode(cfg.mode);
     hud.setUser(user);
@@ -217,6 +378,7 @@ async function boot() {
     scene.setStage(currentStage(), false);
     await loadTags();
     hud.setStage(scene.getStage(), user ? `已祈福 ${user.prayerCount} 次` : '来访');
+    void resumePayments();
   } catch {
     toast('无法连接服务器，正在显示离线的树', 'error');
     hud.setUser(null);

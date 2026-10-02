@@ -1,3 +1,4 @@
+import qrcode from 'qrcode-generator';
 import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
 import type { StorageMode } from './api';
 import type { AudioState } from './audio';
@@ -329,36 +330,89 @@ export function openPray(
   setTimeout(() => $<HTMLButtonElement>('.item', d.el).focus(), 60);
 }
 
+export interface ShopPay {
+  mode: 'demo' | 'alipay';
+  ready: boolean;
+  sandbox: boolean;
+  testPrices?: boolean;
+}
+
+export interface QrPanel {
+  text: string;
+  amount: string;
+  label: string;
+  coins: number;
+}
+
+function qrSvg(text: string): string {
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+
+/**
+ * onBuy 返回：null = 成功（播放到账动画）；string = 错误提示；undefined = 已发起支付、等待结果（不播放动画）
+ */
 export function openShop(
   user: PublicUser,
   packs: TopupPack[],
-  onBuy: (pack: TopupPack) => Promise<string | null>,
+  pay: ShopPay | null,
+  onBuy: (pack: TopupPack) => Promise<string | null | undefined>,
 ) {
+  const real = pay?.mode === 'alipay';
+  const notice = !real
+    ? '演示支付：点击即到账，不会产生任何真实扣款。'
+    : !pay!.ready
+      ? '支付暂未开放，请稍后再来。'
+      : pay!.sandbox
+        ? '支付宝沙箱测试环境：使用沙箱买家账号付款，不会产生真实扣款。'
+        : '使用支付宝安全支付，付款成功后福币自动到账。手机会直接拉起支付宝，电脑请扫码。';
+  const testNotice = real && pay!.ready && pay!.testPrices ? '<div class="notice">测试价：当前为联调阶段，实付金额仅 ¥0.01 / ¥0.02 / ¥0.03，福币数量不变。</div>' : '';
   const d = openDialog(
     '福币商店',
-    `<div class="notice">演示支付：点击即到账，不会产生任何真实扣款。真实支付（微信 / 支付宝）需要商户资质，将在后续阶段接入。</div>
+    `<div class="notice">${notice}</div>${testNotice}
      <p class="balance">当前福币 <b id="shop-coins" data-v="${user.coins}">${user.coins}</b></p>
      <div class="packs">${packs
        .map(
          (p) => `<button class="pack" data-pack="${p.id}">
            <span class="pack-name">${p.label}</span>
            <b>${p.coins}<small> 福币</small></b>
-           <span class="pack-price">¥${p.price}（演示）</span>
+           <span class="pack-price">¥${p.price}${real ? '' : '（演示）'}</span>
          </button>`,
        )
        .join('')}</div>
-     <h3>福币可以换什么</h3>
+     <div class="pay-qr" hidden>
+       <p class="pay-qr-title">请使用支付宝扫码支付 <b class="pay-qr-amount"></b></p>
+       <div class="pay-qr-code" aria-label="支付宝付款二维码"></div>
+       <p class="pay-qr-hint">打开手机支付宝 → 扫一扫。支付完成后本页面会自动更新。</p>
+       <p class="pay-qr-status" role="status" aria-live="polite"></p>
+       <div class="pay-qr-actions">
+         <button type="button" class="btn" data-pay-cancel>返回</button>
+         <button type="button" class="btn primary" data-pay-check>我已支付，刷新</button>
+       </div>
+     </div>
+     <h3 class="shop-perks-title">福币可以换什么</h3>
      <ul class="perks">${ITEMS.filter((i) => i.currency === 'coins')
-       .map((i) => `<li><i class="swatch ${i.glow ? 'glow' : ''}" style="--c:${i.color}"></i><b>${i.name}</b><span>${i.cost} 福币 · 返还 ${i.reward} 能量${i.glow ? ' · 夜间发光' : ''}</span></li>`)
+       .map((i) => `<li><i class="swatch ${i.glow ? 'glow' : ''}" style="--c:${i.color}"></i><b>${i.name}</b><span>${i.cost} 福币${i.reward ? ` · 返还 ${i.reward} 能量` : ''}${i.glow ? ' · 夜间发光' : ''}</span></li>`)
        .join('')}</ul>
      <p class="error-line form-error" role="alert" hidden></p>`,
   );
   const err = $('.form-error', d.el);
+  const packsEl = $('.packs', d.el);
+  const qrEl = $('.pay-qr', d.el);
+  const perks = [$('.shop-perks-title', d.el), $('.perks', d.el)];
+  let qrHandlers: { onCancel: () => void; onCheck: () => void } | null = null;
+
+  const setHidden = (el: HTMLElement, hidden: boolean) => {
+    el.hidden = hidden;
+  };
+
   d.el.querySelectorAll<HTMLButtonElement>('.pack').forEach((btn) =>
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       const pack = packs.find((p) => p.id === btn.dataset.pack)!;
-      let message: string | null;
+      let message: string | null | undefined;
       try {
         message = await onBuy(pack);
       } catch {
@@ -366,6 +420,7 @@ export function openShop(
       } finally {
         btn.disabled = false;
       }
+      if (message === undefined) return;
       if (message) {
         err.textContent = message;
         err.hidden = false;
@@ -378,7 +433,41 @@ export function openShop(
       }
     }),
   );
-  return { setCoins: (n: number) => tweenNumber($('#shop-coins', d.el), n) };
+  $('[data-pay-cancel]', d.el).addEventListener('click', () => qrHandlers?.onCancel());
+  $('[data-pay-check]', d.el).addEventListener('click', () => qrHandlers?.onCheck());
+
+  const hideQr = () => {
+    qrHandlers = null;
+    setHidden(qrEl, true);
+    setHidden(packsEl, false);
+    perks.forEach((el) => setHidden(el, false));
+  };
+
+  return {
+    setCoins: (n: number) => tweenNumber($('#shop-coins', d.el), n),
+    /** 弹窗是否仍然打开（用于停止轮询） */
+    isOpen: () => d.el.isConnected,
+    showQr(panel: QrPanel, handlers: { onCancel: () => void; onCheck: () => void }) {
+      qrHandlers = {
+        onCancel: () => {
+          handlers.onCancel();
+          hideQr();
+        },
+        onCheck: handlers.onCheck,
+      };
+      err.hidden = true;
+      $('.pay-qr-code', d.el).innerHTML = qrSvg(panel.text);
+      $('.pay-qr-amount', d.el).textContent = `¥${panel.amount}（${panel.label}，${panel.coins} 福币）`;
+      $('.pay-qr-status', d.el).textContent = '等待付款…';
+      setHidden(packsEl, true);
+      perks.forEach((el) => setHidden(el, true));
+      setHidden(qrEl, false);
+    },
+    setPayStatus: (text: string) => {
+      $('.pay-qr-status', d.el).textContent = text;
+    },
+    hideQr,
+  };
 }
 
 export function openTerrain(
