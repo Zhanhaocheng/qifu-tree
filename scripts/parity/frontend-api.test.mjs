@@ -35,6 +35,18 @@ for (const mode of ['vercel(default)', 'cross-origin', 'query-style']) {
     if (mode === 'cross-origin') eq(calls[0].url, 'https://api.example.com/api/config');
     if (mode === 'vercel(default)') eq(calls[0].url, '/api/config');
   });
+  await t('payQuery builds the right URL (query-style keeps ?path= and appends &orderNo=)', async () => {
+    behavior = () => Promise.resolve(respond(200, { status: 'pending' }));
+    await api.payQuery('QF1');
+    if (mode === 'query-style') eq(calls[0].url, '/api/index.php?path=/pay/alipay/query&orderNo=QF1');
+    if (mode === 'vercel(default)') eq(calls[0].url, '/api/pay/alipay/query?orderNo=QF1');
+  });
+  await t('payInfo is null when the backend has no payment API (Node/Vercel => demo top-up)', async () => {
+    behavior = () => Promise.resolve(respond(404, {}));
+    eq(await api.payInfo(), null);
+    behavior = () => Promise.resolve(respond(200, {}));
+    eq(await api.payInfo(), null);
+  });
   await t('GET retries on 503 and gives up with server msg', async () => {
     behavior = () => Promise.resolve(respond(503, {}));
     const e = await rej(api.prayers()); eq(calls.length, 3); eq([e.status, e.message], [503, '服务器开小差了，请稍后再试']);
