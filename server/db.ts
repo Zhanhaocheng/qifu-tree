@@ -26,6 +26,9 @@ const SCHEMA = [
     streak INTEGER NOT NULL DEFAULT 0,
     last_checkin TEXT,
     terrain TEXT,
+    nickname TEXT,
+    avatar TEXT,
+    age INTEGER,
     created_at INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS user_terrains (
@@ -73,11 +76,37 @@ function wrap(target: Client | Transaction): Exec {
   };
 }
 
+/**
+ * 个人资料字段（昵称/头像/年龄）。线上已有的表没有这些列：
+ * 缺哪列补哪列（ADD COLUMN 只改表结构，不动已有数据），新补上昵称列时把已有用户的昵称回填为用户名。
+ * 可重复执行；并发冷启动时后到的 ALTER 会报 duplicate column，忽略即可。
+ */
+async function migrateProfileColumns(client: Client) {
+  const info = await client.execute('PRAGMA table_info(users)');
+  const have = new Set(info.rows.map((r) => String(r.name)));
+  let addedNickname = false;
+  for (const [col, ddl] of [
+    ['nickname', 'TEXT'],
+    ['avatar', 'TEXT'],
+    ['age', 'INTEGER'],
+  ] as const) {
+    if (have.has(col)) continue;
+    try {
+      await client.execute(`ALTER TABLE users ADD COLUMN ${col} ${ddl}`);
+      if (col === 'nickname') addedNickname = true;
+    } catch (e) {
+      if (!/duplicate column/i.test(String((e as Error).message))) throw e;
+    }
+  }
+  if (addedNickname) await client.execute('UPDATE users SET nickname = username WHERE nickname IS NULL');
+}
+
 export async function createDb(url: string, mode: DbMode, authToken?: string): Promise<Db> {
   if (url.startsWith('file:')) fs.mkdirSync(path.dirname(url.slice('file:'.length)), { recursive: true });
   const client = createClient({ url, authToken });
   for (const stmt of SCHEMA) await client.execute(stmt);
   await client.execute('ALTER TABLE users ADD COLUMN terrain TEXT').catch(() => undefined);
+  await migrateProfileColumns(client);
   await client.execute('PRAGMA foreign_keys = ON').catch(() => undefined);
   return {
     mode,

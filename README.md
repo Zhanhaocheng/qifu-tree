@@ -57,6 +57,13 @@ vercel --prod
 
 前端构建变量：`VITE_API_BASE`（跨域接口地址，默认同域）、`VITE_API_STYLE=query`（使用 `/api/index.php?path=/xxx`）。前端请求有 12 秒超时，GET 自动重试 2 次，POST 不重试。
 
+## 个人资料（昵称 / 头像 / 年龄）
+
+- 登录名（`username`）唯一且不可修改；界面优先显示昵称（默认等于登录名，可改，1-20 位字母/数字/汉字/空格/下划线/短横线/点/间隔号）。
+- 头像：12 个内置中国风 SVG 头像（`src/avatar.ts`），或上传图片：前端裁剪为 128×128 并压缩为 WebP/JPEG（≤ 24 KB），后端再校验类型、文件头和大小。年龄选填，1-120。
+- 接口：`GET /api/profile`、`PUT /api/profile`（`POST /api/profile` 等价，供拦截 PUT 的主机使用）。`/api/me`、登录、注册返回的用户对象带 `nickname`、`avatar`、`age`；祈福牌 `tag` 带 `nickname`。校验逻辑在 `shared/game.ts` 的 `validateProfile`，PHP 版在 `php-backend/api/lib/game.php` 的 `q_validate_profile`，两边必须一致（`npm run test:parity` 比对）。
+- 数据库升级是自动的：Node/Turso 启动时、PHP 首次访问数据库时，检测 `users` 缺哪列就补哪列（只加可空新列，不改已有数据），并把已有用户的昵称回填为用户名。PHP 老库验证：`bash scripts/parity/profile-migration.sh`（需要 `QIFU_DB_*` 和 mysql root）；手动升级 SQL 见 `php-backend/upgrade-profile.sql`。
+
 ## 内置测试账号
 
 每次启动（含 Vercel 冷启动、演示模式内存重置、本地 SQLite、Turso）都会幂等地确保下面的账号存在，登录时也会再次校验：

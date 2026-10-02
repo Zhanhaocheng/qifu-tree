@@ -8,7 +8,8 @@ import { createFx } from './fx';
 import { initMotion } from './motion';
 import { QifuScene, type Quality } from './scene/scene';
 import { STAGE_PARAMS } from './scene/tree';
-import { closeDialog, hideLoading, mountHud, openAuth, openPray, openShop, openTerrain, showPopup, toast } from './ui';
+import { displayName } from './avatar';
+import { closeDialog, hideLoading, mountHud, openAuth, openPray, openProfile, openShop, openTerrain, showPopup, toast } from './ui';
 
 const params = new URLSearchParams(location.search);
 const hourParam = params.get('hour');
@@ -39,6 +40,28 @@ const hud = mountHud({
     refresh();
     await loadTags();
     toast('已退出登录');
+  },
+  onProfile: () => {
+    audio.click();
+    if (!user) return showAuth();
+    openProfile(user, async (patch) => {
+      try {
+        const res = await api.updateProfile(patch);
+        user = res.user;
+        audio.click();
+        refresh();
+        toast('个人资料已保存', 'success');
+        return null;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          closeDialog();
+          handleError(e);
+          return null;
+        }
+        audio.error();
+        return e instanceof ApiError ? e.message : '保存失败，请稍后重试';
+      }
+    });
   },
   onCheckin: async () => {
     audio.click();
@@ -116,6 +139,7 @@ const scene = new QifuScene(
     },
     onFrame: (s) => {
       audio.setEnvironment(s.wind, s.night);
+      applySkyTheme(s.theme, s.skyTop, s.skyHorizon);
       if (audio.terrain !== s.terrain) audio.setTerrain(s.terrain);
     },
     onAnimal: (kind, pos, cam) => audio.animal(kind, pos.distanceTo(cam), pos.x - cam.x),
@@ -125,6 +149,31 @@ const scene = new QifuScene(
 );
 document.documentElement.dataset.gfx = qualityParam && ['low', 'medium', 'high'].includes(qualityParam) ? qualityParam : matchMedia('(pointer: coarse)').matches || innerWidth < 720 ? 'medium' : 'high';
 (window as unknown as { __qifu: unknown }).__qifu = { scene, audio };
+
+/** 页面底色与状态栏/地址栏颜色跟随天空（昼夜变化）；每秒最多更新一次 */
+const themeMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+let lastThemeAt = 0;
+let lastTheme = '';
+function applySkyTheme(theme: string, top: string, horizon: string) {
+  const t = performance.now();
+  if (t - lastThemeAt < 1000 || theme === lastTheme) return;
+  lastThemeAt = t;
+  lastTheme = theme;
+  themeMeta?.setAttribute('content', theme);
+  const root = document.documentElement.style;
+  root.setProperty('--sky-top', top);
+  root.setProperty('--sky-horizon', horizon);
+}
+
+/* iOS 老版本不支持 overscroll-behavior：页面本身不滚动，禁掉非滚动区域上的触摸拖动，避免橡皮筋回弹露出底色 */
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (e.touches.length > 1) return e.preventDefault();
+    if (!(e.target as HTMLElement).closest?.('.dialog, textarea, input[type=range]')) e.preventDefault();
+  },
+  { passive: false },
+);
 
 function showBusy(on: boolean) {
   document.querySelector('#app')!.classList.toggle('busy', on);
@@ -150,7 +199,7 @@ function showAuth() {
       audio.click();
       refresh();
       loadTags().catch(() => undefined);
-      toast(mode === 'register' ? `欢迎，${user.username}！已赠送 30 点能量` : `欢迎回来，${user.username}`, 'success');
+      toast(mode === 'register' ? `欢迎，${displayName(user)}！已赠送 30 点能量` : `欢迎回来，${displayName(user)}`, 'success');
       return null;
     } catch (e) {
       audio.error();

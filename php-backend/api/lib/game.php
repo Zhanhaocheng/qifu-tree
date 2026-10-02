@@ -89,3 +89,105 @@ function q_default_terrain(int $userId): string
     $terrains = q_terrains();
     return $terrains[($h >> 8) % count($terrains)]['id'];
 }
+
+/* ------------------------------------------------------------ 个人资料校验 */
+// 与 shared/game.ts 的 validateProfile 逐条一致（scripts/parity 会比对两边的响应）
+
+const Q_NICKNAME_MAX = 20;
+const Q_AGE_MIN = 1;
+const Q_AGE_MAX = 120;
+const Q_AVATAR_MAX_BYTES = 24 * 1024;
+const Q_AVATAR_PRESETS = ['crane', 'lotus', 'koi', 'bamboo', 'plum', 'lantern', 'fu', 'cloud', 'panda', 'rabbit', 'mountain', 'coin'];
+
+const Q_ERR_NICKNAME = '昵称需为 1-20 位的字母、数字、汉字、空格、下划线、短横线、点或间隔号';
+const Q_ERR_AGE = '年龄需为 1-120 之间的整数，也可以留空';
+const Q_ERR_AVATAR = '头像无效，请重新选择';
+const Q_ERR_AVATAR_TYPE = '头像图片格式需为 PNG、JPEG 或 WebP';
+const Q_ERR_AVATAR_SIZE = '头像图片过大，请换一张或重新裁剪';
+const Q_ERR_PROFILE_EMPTY = '没有需要修改的内容';
+
+/** 返回 null 表示有效，否则是错误提示 */
+function q_avatar_error(string $v): ?string
+{
+    if (strpos($v, 'preset:') === 0) {
+        return in_array(substr($v, 7), Q_AVATAR_PRESETS, true) ? null : Q_ERR_AVATAR;
+    }
+    if (!preg_match('#^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$#D', $v, $m) || strlen($m[2]) % 4 !== 0) {
+        return strpos($v, 'data:image/') === 0 ? Q_ERR_AVATAR_TYPE : Q_ERR_AVATAR;
+    }
+    $b64 = $m[2];
+    $bytes = intdiv(strlen($b64) * 3, 4) - (substr($b64, -2) === '==' ? 2 : (substr($b64, -1) === '=' ? 1 : 0));
+    if ($bytes > Q_AVATAR_MAX_BYTES) {
+        return Q_ERR_AVATAR_SIZE;
+    }
+    $head = base64_decode(substr($b64, 0, 24), true);
+    if (!is_string($head)) {
+        return Q_ERR_AVATAR_TYPE;
+    }
+    $isPng = substr($head, 0, 8) === "\x89PNG\r\n\x1a\n";
+    $isJpeg = substr($head, 0, 3) === "\xff\xd8\xff";
+    $isWebp = substr($head, 0, 4) === 'RIFF' && substr($head, 8, 4) === 'WEBP';
+    $ok = $m[1] === 'png' ? $isPng : ($m[1] === 'jpeg' ? $isJpeg : $isWebp);
+    return $ok ? null : Q_ERR_AVATAR_TYPE;
+}
+
+/**
+ * 校验并规范化个人资料更新，只处理出现的字段。
+ * 成功：['ok' => true, 'value' => [...]]（value 里 nickname => null 表示恢复为用户名）；失败：['ok' => false, 'error' => 文案]
+ */
+function q_validate_profile(array $b): array
+{
+    $value = [];
+    if (array_key_exists('nickname', $b)) {
+        $raw = $b['nickname'];
+        if ($raw === null) {
+            $value['nickname'] = null;
+        } elseif (!is_string($raw)) {
+            return ['ok' => false, 'error' => Q_ERR_NICKNAME];
+        } else {
+            $t = preg_replace('/ {2,}/', ' ', q_trim($raw));
+            if ($t === '') {
+                $value['nickname'] = null;
+            } elseif (!preg_match('/^[\p{L}\p{M}\p{N}_\-·. ]{1,20}$/uD', $t)) {
+                return ['ok' => false, 'error' => Q_ERR_NICKNAME];
+            } else {
+                $value['nickname'] = $t;
+            }
+        }
+    }
+    if (array_key_exists('avatar', $b)) {
+        $raw = $b['avatar'];
+        if ($raw === null || $raw === '') {
+            $value['avatar'] = null;
+        } elseif (!is_string($raw)) {
+            return ['ok' => false, 'error' => Q_ERR_AVATAR];
+        } else {
+            $err = q_avatar_error($raw);
+            if ($err !== null) {
+                return ['ok' => false, 'error' => $err];
+            }
+            $value['avatar'] = $raw;
+        }
+    }
+    if (array_key_exists('age', $b)) {
+        $raw = $b['age'];
+        $n = false;
+        if ($raw === null || $raw === '') {
+            $n = null;
+        } elseif (is_int($raw)) {
+            $n = $raw;
+        } elseif (is_float($raw) && is_finite($raw) && floor($raw) == $raw && abs($raw) < 1e15) {
+            $n = (int) $raw;
+        } elseif (is_string($raw) && preg_match('/^\d{1,3}$/D', $raw)) {
+            $n = (int) $raw;
+        }
+        if ($n === false || ($n !== null && ($n < Q_AGE_MIN || $n > Q_AGE_MAX))) {
+            return ['ok' => false, 'error' => Q_ERR_AGE];
+        }
+        $value['age'] = $n;
+    }
+    if (!$value) {
+        return ['ok' => false, 'error' => Q_ERR_PROFILE_EMPTY];
+    }
+    return ['ok' => true, 'value' => $value];
+}

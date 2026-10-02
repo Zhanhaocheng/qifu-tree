@@ -295,6 +295,120 @@ async function scenarios(base) {
   for (let i = 1; i <= 305; i++) await Q.post(i % 50 === 0 ? `bulk ${i}` : 'bulk', '/api/pray', { item: i % 2 ? 'wood' : 'lotus', text: `b${i}` });
   await Q.get('list capped at 300', '/api/prayers');
 
+  // ---- S9b 个人资料（昵称 / 头像 / 年龄）
+  const PR = A.fresh();
+  await A.get('profile anon get', '/api/profile');
+  await A.call('profile anon put', 'PUT', '/api/profile', { body: { nickname: 'x' } });
+  await A.post('profile anon post', '/api/profile', { nickname: 'x' });
+  await A.call('profile wrong method delete', 'DELETE', '/api/profile');
+  await reg(PR, 'Profiler_A');
+  await PR.get('profile default', '/api/profile');
+  await PR.get('profile bearer', '/api/profile', { cookie: '', bearer: PR.token });
+  const put = (label, body, o = {}) => PR.call(label, 'PUT', '/api/profile', { body, ...o });
+  await put('nick ok', { nickname: '小福·心_a-b.c 1' });
+  await PR.get('profile after nick', '/api/profile');
+  await put('nick collapse spaces', { nickname: '  a   b  ' });
+  await put('nick 20 chars', { nickname: '福'.repeat(20) });
+  for (const [label, n] of [
+    ['21 chars', '福'.repeat(21)],
+    ['script', '<script>alert(1)</script>'],
+    ['quote', 'a"b'],
+    ['amp', 'a&b'],
+    ['emoji', '😀'],
+    ['slash', 'a/b'],
+    ['newline', 'a\nb'],
+    ['tab inside', 'a\tb'],
+    ['number', 123],
+    ['array', ['a']],
+    ['bool', true],
+    ['object', { a: 1 }],
+  ]) await put(`nick bad ${label}`, { nickname: n });
+  await put('nick reset empty', { nickname: '' });
+  await PR.get('profile after reset', '/api/profile');
+  await put('nick set again', { nickname: '二号' });
+  await put('nick reset null', { nickname: null });
+  await put('nick whitespace only', { nickname: '   ' });
+  await put('nick nbsp trimmed', { nickname: '\u00a0abc\u00a0' });
+  await put('nick combining mark', { nickname: 'e\u0301x' });
+  await put('nick fullwidth', { nickname: 'ａｂｃ１' });
+
+  for (const [label, a] of [
+    ['25', 25], ['1', 1], ['120', 120], ['0', 0], ['121', 121], ['-1', -1], ['str 30', '30'], ['str 030', '030'], ['str space', ' 30'],
+    ['str 4 digits', '0030'], ['float', 30.5], ['bool', true], ['abc', 'abc'], ['array', [30]], ['null', null], ['empty', ''],
+  ]) await put(`age ${label}`, { age: a });
+  await PR.call('age 30.0 raw', 'PUT', '/api/profile', { raw: '{"age":30.0}' });
+  await PR.call('age 1e3 raw', 'PUT', '/api/profile', { raw: '{"age":1e3}' });
+  await PR.call('age 1e400 raw', 'PUT', '/api/profile', { raw: '{"age":1e400}' });
+  await put('age set', { age: 33 });
+  await PR.get('profile after age', '/api/profile');
+
+  const b64 = (bytes) => Buffer.from(bytes).toString('base64');
+  const pad = (head, n) => Buffer.concat([Buffer.from(head), Buffer.alloc(n - head.length, 7)]);
+  const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13];
+  const JPG_HEAD = [0xff, 0xd8, 0xff, 0xe0, 0, 0x10];
+  const WEBP_HEAD = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
+  const png = `data:image/png;base64,${b64(pad(PNG_HEAD, 400))}`;
+  const jpg = `data:image/jpeg;base64,${b64(pad(JPG_HEAD, 1000))}`;
+  const webp = `data:image/webp;base64,${b64(pad(WEBP_HEAD, 777))}`;
+  await put('avatar preset', { avatar: 'preset:crane' });
+  await put('avatar png', { avatar: png });
+  await put('avatar jpeg', { avatar: jpg });
+  await put('avatar webp', { avatar: webp });
+  await PR.get('profile after webp', '/api/profile');
+  await put('avatar max bytes ok', { avatar: `data:image/jpeg;base64,${b64(pad(JPG_HEAD, 24576))}` });
+  await put('avatar max bytes+1', { avatar: `data:image/jpeg;base64,${b64(pad(JPG_HEAD, 24577))}` });
+  await put('avatar huge', { avatar: `data:image/jpeg;base64,${b64(pad(JPG_HEAD, 400000))}` });
+  for (const [label, a] of [
+    ['preset unknown', 'preset:nope'],
+    ['preset empty', 'preset:'],
+    ['preset case', 'preset:Crane'],
+    ['png bytes as jpeg', `data:image/jpeg;base64,${b64(pad(PNG_HEAD, 400))}`],
+    ['jpeg bytes as png', `data:image/png;base64,${b64(pad(JPG_HEAD, 400))}`],
+    ['plain bytes as webp', `data:image/webp;base64,${b64(Buffer.alloc(100, 1))}`],
+    ['svg', `data:image/svg+xml;base64,${b64(Buffer.from('<svg onload=alert(1)>'))}`],
+    ['gif', `data:image/gif;base64,${b64(Buffer.from('GIF89a1234567'))}`],
+    ['svg utf8', 'data:image/svg+xml;utf8,<svg/>'],
+    ['http url', 'http://example.com/a.png'],
+    ['javascript url', 'javascript:alert(1)'],
+    ['bad base64 chars', 'data:image/png;base64,@@@@'],
+    ['bad base64 length', `data:image/png;base64,${b64(pad(PNG_HEAD, 400)).slice(1)}`],
+    ['no payload', 'data:image/png;base64,'],
+    ['trailing newline', `${png}\n`],
+    ['number', 5],
+    ['array', ['preset:crane']],
+    ['object', {}],
+  ]) await put(`avatar bad ${label}`, { avatar: a });
+  await put('avatar clear empty', { avatar: '' });
+  await put('avatar clear null', { avatar: null });
+
+  await put('all fields', { nickname: '全部', age: '18', avatar: 'preset:lotus' });
+  await put('all fields one bad leaves rest', { nickname: '不会保存', age: 500, avatar: 'preset:koi' });
+  await PR.get('profile after atomic reject', '/api/profile');
+  await put('empty object', {});
+  await put('unknown keys only', { username: 'hacker', energy: 99999, coins: 99999 });
+  await put('unknown keys ignored', { username: 'hacker', energy: 99999, nickname: '仅昵称' });
+  await PR.get('me after profile', '/api/me');
+  await PR.call('profile invalid json', 'PUT', '/api/profile', { raw: 'not json' });
+  await PR.call('profile array body', 'PUT', '/api/profile', { raw: '[]' });
+  await PR.post('profile via post', '/api/profile', { nickname: 'POST版', age: 40 });
+  await PR.post('profile post bad', '/api/profile', { nickname: '<b>' });
+  await PR.call('profile put bearer', 'PUT', '/api/profile', { cookie: '', bearer: PR.token, body: { age: 41 } });
+  await PR.call('profile get query', 'GET', '/api/profile?x=1');
+  await A.call('preflight put', 'OPTIONS', '/api/profile', { headers: { origin: ALLOWED, 'access-control-request-method': 'PUT', 'access-control-request-headers': 'content-type' } });
+  await PR.call('cors put', 'PUT', '/api/profile', { headers: { origin: ALLOWED }, body: { age: 42 } });
+  await PR.post('pray with nickname', '/api/pray', { item: 'wood', text: '昵称展示' });
+  await PR.post('login shows profile', '/api/login', { username: 'profiler_a', password: '123456' });
+  await PR.get('prayers show nickname', '/api/prayers');
+  const PR2 = A.fresh();
+  await reg(PR2, 'Profiler_B');
+  await PR2.get('other user unaffected', '/api/profile');
+  await PR2.get('other prayers view', '/api/prayers');
+  await PR.post('profile logout', '/api/logout');
+  await put('profile after logout', { nickname: 'x' });
+  await Q.get('test account profile', '/api/profile');
+  await Q.call('test account put', 'PUT', '/api/profile', { body: { nickname: '超灵', age: 99 } });
+  await Q.post('test account login again keeps nickname', '/api/login', { username: 'qifu_test', password: 'Qifu@Test2026' });
+
   // ---- S10 限流（每个子场景使用独立 IP，时钟固定）
   const R = A.fresh();
   R.ip = '10.9.9.9';

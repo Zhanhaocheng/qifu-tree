@@ -6,6 +6,8 @@
 -- （ASCII 小写后的用户名，utf8mb4_bin，唯一）负责「不区分大小写」唯一性与登录查找。
 -- 不使用 utf8mb4_general_ci，因为它还会把 café/cafe、不同的生僻字/emoji 当成同一个名字。
 
+-- 昵称 nickname / 头像 avatar / 年龄 age 三列是后加的：全新安装直接包含；
+-- 老站点不需要重新安装，api 首次访问数据库时会自动补列并把昵称回填为用户名（也可手动执行 upgrade-profile.sql）。
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT NOT NULL AUTO_INCREMENT,
   username VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
@@ -16,6 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
   streak INT NOT NULL DEFAULT 0,
   last_checkin VARCHAR(10) CHARACTER SET ascii COLLATE ascii_bin NULL,
   terrain VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  nickname VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
+  avatar TEXT CHARACTER SET ascii COLLATE ascii_bin NULL,
+  age SMALLINT NULL,
   created_at BIGINT NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_username_key (username_key)

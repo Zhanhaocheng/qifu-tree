@@ -1,4 +1,4 @@
-import type { ItemDef, ItemId, PrayerTag, PublicUser, TerrainDef, TerrainId, TopupPack } from '../shared/game';
+import type { ItemDef, ItemId, PrayerTag, ProfileUpdate, PublicUser, TerrainDef, TerrainId, TopupPack } from '../shared/game';
 
 export type StorageMode = 'local' | 'turso' | 'demo';
 
@@ -177,7 +177,18 @@ export interface PrayersResponse {
   recent24h: number;
 }
 
+/** 部分虚拟主机会拦截 PUT（返回 403/404/405/501）；个人资料接口同时接受 POST，遇到这些状态码改用 POST 重发（保存是幂等的） */
+async function saveProfile(patch: ProfileUpdate) {
+  try {
+    return await request<{ user: PublicUser }>('PUT', '/api/profile', patch);
+  } catch (e) {
+    if (e instanceof ApiError && [403, 404, 405, 501].includes(e.status)) return request<{ user: PublicUser }>('POST', '/api/profile', patch);
+    throw e;
+  }
+}
+
 export const api = {
+  updateProfile: saveProfile,
   config: () => request<Config>('GET', '/api/config'),
   me: () => request<{ user: PublicUser | null; mode: StorageMode }>('GET', '/api/me'),
   register: (username: string, password: string) =>

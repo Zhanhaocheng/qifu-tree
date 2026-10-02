@@ -36,7 +36,7 @@ interface TagInst {
 
 export interface SceneEvents {
   onPick?: (tag: PrayerTag | null, x: number, y: number) => void;
-  onFrame?: (state: { wind: number; night: number; hour: number; terrain: TerrainId }) => void;
+  onFrame?: (state: { wind: number; night: number; hour: number; terrain: TerrainId; skyTop: string; skyHorizon: string; theme: string }) => void;
   onQuality?: (q: Quality) => void;
   onAnimal?: (kind: AnimalSound, pos: THREE.Vector3, camPos: THREE.Vector3) => void;
 }
@@ -438,6 +438,10 @@ export class QifuScene {
     }
     this.resize();
   }
+
+  private skyHexTick = 0;
+  private skyScratch = new THREE.Color();
+  private skyHex = { skyTop: '#050818', skyHorizon: '#0d1530', theme: '#0d1530' };
 
   private resize() {
     const parent = this.canvas.parentElement ?? this.canvas;
@@ -892,7 +896,15 @@ export class QifuScene {
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.camera);
 
-    this.events.onFrame?.({ wind: this.wind, night: this.sky.state.night, hour: this.sky.state.hour, terrain: this.terrainId });
+    if (this.skyHexTick++ % 30 === 0) {
+      const st = this.sky.state;
+      this.skyHex = {
+        skyTop: `#${st.top.getHexString()}`,
+        skyHorizon: `#${st.horizon.getHexString()}`,
+        theme: `#${this.skyScratch.copy(st.top).lerp(st.horizon, 0.3).getHexString()}`,
+      };
+    }
+    this.events.onFrame?.({ wind: this.wind, night: this.sky.state.night, hour: this.sky.state.hour, terrain: this.terrainId, ...this.skyHex });
     this.monitorPerformance(dt);
   }
 

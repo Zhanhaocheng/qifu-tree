@@ -12,7 +12,7 @@ const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matche
 const tier = () => root.dataset.gfx ?? 'medium';
 const $ = <T extends HTMLElement>(sel: string, scope: ParentNode = document) => scope.querySelector<T>(sel);
 
-const RIPPLE_SEL = '.btn, .act, .icon-btn, .login-btn, .pack, .item, .terrain, .tab, .mini, .linkish, .eye';
+const RIPPLE_SEL = '.btn, .act, .icon-btn, .login-btn, .pack, .item, .terrain, .tab, .menu-item, .av-opt, .linkish, .eye';
 const GLOW_SEL = '.act, .pack, .item, .terrain';
 
 export function initMotion() {

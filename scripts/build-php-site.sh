@@ -17,6 +17,7 @@ mkdir -p "$SITE/api"
 cp -r php-backend/api/. "$SITE/api/"
 rm -f "$SITE/api/config.php" "$SITE/api/import.sql"
 cp php-backend/schema.sql "$SITE/schema.sql"
+cp php-backend/upgrade-profile.sql "$SITE/upgrade-profile.sql"
 cp php-backend/api/lib/schema.sql "$SITE/api/lib/schema.sql"
 
 # 2) 查询风格前端（/api/index.php?path=/xxx），仅前端文件
