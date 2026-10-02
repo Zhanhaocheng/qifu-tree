@@ -15,7 +15,8 @@
     "build:php": "bash scripts/build-php-site.sh",
     "export:turso": "node scripts/export-turso.mjs",
     "test:parity": "bash scripts/parity/run.sh",
-    "test:pay": "bash scripts/pay/run.sh"
+    "test:pay": "bash scripts/pay/run.sh",
+    "test:sms": "bash scripts/sms/run.sh"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",

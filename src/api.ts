@@ -9,6 +9,7 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public kind: ApiErrorKind = 'http',
+    public retryAfter?: number,
   ) {
     super(message);
   }
@@ -127,7 +128,13 @@ async function request<T>(method: string, url: string, body?: unknown, opts: Req
   if (!res.ok) {
     const serverMessage = (data as { error?: unknown }).error;
     const fallback = res.status === 401 ? MSG_SESSION : res.status >= 500 ? MSG_SERVER : MSG_FAILED;
-    throw new ApiError(typeof serverMessage === 'string' && serverMessage ? serverMessage : fallback, res.status);
+    const retryAfter = (data as { retryAfter?: unknown }).retryAfter;
+    throw new ApiError(
+      typeof serverMessage === 'string' && serverMessage ? serverMessage : fallback,
+      res.status,
+      'http',
+      typeof retryAfter === 'number' ? retryAfter : undefined,
+    );
   }
   return data as T;
 }
@@ -171,6 +178,15 @@ export interface PayOrder {
   user?: PublicUser;
 }
 
+export interface SmsInfo {
+  enabled: boolean;
+  /** 服务器处于 mock 模式：不会真实发送短信（仅开发/测试） */
+  mock: boolean;
+  codeLength: number;
+  resendSeconds: number;
+  expiresMinutes: number;
+}
+
 export interface PrayersResponse {
   tags: PrayerTag[];
   total: number;
@@ -189,6 +205,21 @@ export const api = {
     request<{ user: PublicUser; token?: string }>('POST', '/api/login', { username, password }, {
       timeoutMessage: '登录请求超时，网络较慢，请稍后重试',
     }),
+  /** 旧版后端没有短信接口：任何失败都当作「未开放」，界面只显示用户名密码登录 */
+  smsInfo: () =>
+    request<SmsInfo>('GET', '/api/sms/info')
+      .then((r) => (r && r.enabled === true ? r : null))
+      .catch(() => null),
+  smsSend: (phone: string, purpose: 'login' | 'bind' = 'login') =>
+    request<{ ok: true; resendSeconds: number; expiresMinutes: number }>('POST', '/api/sms/send', { phone, purpose }, {
+      timeoutMessage: '请求超时，验证码可能已发送，请稍等片刻再查看短信',
+    }),
+  smsLogin: (phone: string, code: string) =>
+    request<{ user: PublicUser; token?: string; registered: boolean }>('POST', '/api/sms/login', { phone, code }, {
+      timeoutMessage: '登录请求超时，网络较慢，请稍后重试',
+    }),
+  smsBind: (phone: string, code: string) => request<{ ok: true; phone: string }>('POST', '/api/sms/bind', { phone, code }),
+  smsPhone: () => request<{ phone: string | null }>('GET', '/api/sms/phone'),
   logout: () => request<{ ok: true }>('POST', '/api/logout').finally(() => writeToken(null)),
   checkin: () => request<{ gained: number; user: PublicUser }>('POST', '/api/checkin'),
   pray: (item: ItemId, text: string) => request<{ tag: PrayerTag; reward: number; user: PublicUser }>('POST', '/api/pray', { item, text }),

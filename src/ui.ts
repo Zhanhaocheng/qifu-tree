@@ -1,8 +1,9 @@
 import qrcode from 'qrcode-generator';
 import { ITEMS, STAGES, type ItemDef, type ItemId, type PrayerTag, type PublicUser, type TerrainDef, type TerrainId, type TopupPack } from '../shared/game';
-import type { StorageMode } from './api';
+import type { SmsInfo, StorageMode } from './api';
 import type { AudioState } from './audio';
 import { markReady } from './motion';
+import { mountSmsPane, smsPaneHTML, type SmsSendOutcome } from './smsAuth';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 
@@ -237,53 +238,128 @@ export function closeDialog() {
   closeCurrent?.();
 }
 
-export function openAuth(onSubmit: (mode: 'login' | 'register', username: string, password: string) => Promise<string | null>) {
+export interface SmsAuthHandlers {
+  info: SmsInfo;
+  send: (phone: string) => Promise<SmsSendOutcome>;
+  login: (phone: string, code: string) => Promise<string | null>;
+}
+
+type AuthMode = 'login' | 'register' | 'sms';
+const AUTH_TAB_KEY = 'qifu_auth_tab';
+
+export function openAuth(onSubmit: (mode: 'login' | 'register', username: string, password: string) => Promise<string | null>, sms?: SmsAuthHandlers) {
+  let remembered: string | null = null;
+  try {
+    remembered = localStorage.getItem(AUTH_TAB_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+  let mode: AuthMode = sms ? (remembered === 'login' || remembered === 'register' ? remembered : 'sms') : 'login';
+  const tabs = sms
+    ? `<button class="tab" data-mode="login" role="tab">密码登录</button><button class="tab" data-mode="sms" role="tab">短信登录</button><button class="tab" data-mode="register" role="tab">注册</button>`
+    : `<button class="tab" data-mode="login" role="tab">登录</button><button class="tab" data-mode="register" role="tab">注册</button>`;
   const d = openDialog(
     '登录祈福树',
     `
-    <div class="tabs" role="tablist">
-      <button class="tab active" data-mode="login" role="tab">登录</button>
-      <button class="tab" data-mode="register" role="tab">注册</button>
-    </div>
+    <div class="tabs ${sms ? 'tabs-3' : ''}" role="tablist">${tabs}</div>
     <form class="form" autocomplete="on">
-      <label>用户名<input name="username" autocomplete="username" maxlength="20" required placeholder="2-20 位，可用汉字" /></label>
-      <label>密码<span class="field"><input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="72" required placeholder="至少 6 位" /><button type="button" class="eye" aria-label="显示密码" aria-pressed="false">${ICONS.eye}</button></span></label>
+      <div class="pane" data-pane="pw">
+        <label>用户名<input name="username" autocomplete="username" maxlength="20" required placeholder="2-20 位，可用汉字" /></label>
+        <label>密码<span class="field"><input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="72" required placeholder="至少 6 位" /><button type="button" class="eye" aria-label="显示密码" aria-pressed="false">${ICONS.eye}</button></span></label>
+      </div>
+      ${sms ? `<div class="pane" data-pane="sms" hidden>${smsPaneHTML()}</div>` : ''}
       <p class="form-error" role="alert" hidden></p>
       <button class="btn primary block" type="submit">登录</button>
-      <p class="fine">新用户注册即送 30 点能量，每天签到还能领取更多。</p>
+      <p class="fine"></p>
     </form>`,
   );
-  let mode: 'login' | 'register' = 'login';
   const form = $<HTMLFormElement>('form', d.el);
   const submit = $<HTMLButtonElement>('button[type=submit]', d.el);
   const err = $('.form-error', d.el);
+  const fine = $('.fine', d.el);
+  const pwPane = $('[data-pane=pw]', d.el);
+  const smsPaneEl = d.el.querySelector<HTMLElement>('[data-pane=sms]');
+
+  const showError = (message: string | null) => {
+    err.hidden = true;
+    if (!message) return;
+    void err.offsetWidth;
+    err.textContent = message;
+    err.hidden = false;
+  };
+
+  const pane = sms && smsPaneEl
+    ? mountSmsPane(smsPaneEl, {
+        info: sms.info,
+        send: sms.send,
+        onError: showError,
+        onComplete: () => submit.click(),
+      })
+    : null;
+
+  const label = () => (mode === 'login' ? '登录' : mode === 'register' ? '注册并进入' : '登录 / 注册');
+  const apply = () => {
+    d.el.querySelectorAll<HTMLButtonElement>('.tab').forEach((t) => {
+      const on = t.dataset.mode === mode;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', String(on));
+    });
+    const isSms = mode === 'sms';
+    pwPane.hidden = isSms;
+    pwPane.querySelectorAll('input, button').forEach((el) => ((el as HTMLInputElement).disabled = isSms));
+    if (smsPaneEl) smsPaneEl.hidden = !isSms;
+    pane?.setActive(isSms);
+    submit.textContent = label();
+    fine.textContent = isSms
+      ? `未注册的手机号验证通过后会自动创建账号，注册即送 30 点能量。`
+      : '新用户注册即送 30 点能量，每天签到还能领取更多。';
+    $<HTMLInputElement>('input[name=password]', d.el).autocomplete = mode === 'register' ? 'new-password' : 'current-password';
+    showError(null);
+  };
+  apply();
+
   d.el.querySelectorAll<HTMLButtonElement>('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
-      mode = tab.dataset.mode as typeof mode;
-      d.el.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      submit.textContent = mode === 'login' ? '登录' : '注册并进入';
-      $<HTMLInputElement>('input[name=password]', d.el).autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-      err.hidden = true;
+      mode = tab.dataset.mode as AuthMode;
+      try {
+        localStorage.setItem(AUTH_TAB_KEY, mode);
+      } catch {
+        /* storage unavailable */
+      }
+      apply();
+      setTimeout(() => (mode === 'sms' ? pane?.focus() : $<HTMLInputElement>('input[name=username]', d.el).focus()), 60);
     }),
   );
+
+  let busy = false;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (busy) return;
     const data = new FormData(form);
+    busy = true;
     submit.disabled = true;
-    submit.textContent = mode === 'login' ? '登录中…' : '注册中…';
+    submit.textContent = mode === 'register' ? '注册中…' : '登录中…';
     let message: string | null;
     try {
-      message = await onSubmit(mode, String(data.get('username')), String(data.get('password')));
+      if (mode === 'sms' && sms && pane) {
+        message = pane.validate();
+        if (!message) message = await sms.login(pane.phone(), pane.code());
+        if (message) pane.reject();
+      } else {
+        message = await onSubmit(mode === 'register' ? 'register' : 'login', String(data.get('username')), String(data.get('password')));
+      }
     } catch {
       message = '操作失败，请稍后重试';
     } finally {
+      busy = false;
       submit.disabled = false;
-      submit.textContent = mode === 'login' ? '登录' : '注册并进入';
+      submit.textContent = label();
     }
-    if (message) {
-      err.textContent = message;
-      err.hidden = false;
-    } else d.close();
+    if (message) showError(message);
+    else {
+      pane?.dispose();
+      d.close();
+    }
   });
   const pwd = $<HTMLInputElement>('input[name=password]', d.el);
   const eye = $<HTMLButtonElement>('.eye', d.el);
@@ -295,7 +371,67 @@ export function openAuth(onSubmit: (mode: 'login' | 'register', username: string
     eye.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
     pwd.focus();
   });
-  setTimeout(() => $<HTMLInputElement>('input[name=username]', d.el).focus(), 60);
+  setTimeout(() => (mode === 'sms' ? pane?.focus() : $<HTMLInputElement>('input[name=username]', d.el).focus()), 60);
+}
+
+export interface BindPhoneHandlers {
+  info: SmsInfo;
+  /** 当前已绑定的手机号（已打码），没有则为 null */
+  current: string | null;
+  send: (phone: string) => Promise<SmsSendOutcome>;
+  bind: (phone: string, code: string) => Promise<string | null>;
+}
+
+/** 已登录账号绑定/换绑手机号。设置菜单里调用即可（见 main.ts 的 qifu:bind-phone 事件）。 */
+export function openBindPhone(h: BindPhoneHandlers) {
+  const d = openDialog(
+    h.current ? '更换手机号' : '绑定手机号',
+    `
+    <form class="form" autocomplete="on">
+      <p class="fine bind-current">${h.current ? `当前已绑定 <b>${esc(h.current)}</b>，验证新号码后会替换。` : '绑定后可以直接用手机号和短信验证码登录这个账号。'}</p>
+      <div class="pane">${smsPaneHTML()}</div>
+      <p class="form-error" role="alert" hidden></p>
+      <button class="btn primary block" type="submit">${h.current ? '确认更换' : '绑定手机号'}</button>
+    </form>`,
+  );
+  const form = $<HTMLFormElement>('form', d.el);
+  const submit = $<HTMLButtonElement>('button[type=submit]', d.el);
+  const err = $('.form-error', d.el);
+  const showError = (message: string | null) => {
+    err.hidden = true;
+    if (!message) return;
+    void err.offsetWidth;
+    err.textContent = message;
+    err.hidden = false;
+  };
+  const pane = mountSmsPane($('.pane', d.el), { info: h.info, send: h.send, onError: showError, onComplete: () => submit.click() });
+  let busy = false;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    busy = true;
+    submit.disabled = true;
+    const idle = submit.textContent;
+    submit.textContent = '提交中…';
+    let message = pane.validate();
+    try {
+      if (!message) message = await h.bind(pane.phone(), pane.code());
+    } catch {
+      message = '操作失败，请稍后重试';
+    } finally {
+      busy = false;
+      submit.disabled = false;
+      submit.textContent = idle;
+    }
+    if (message) {
+      pane.reject();
+      showError(message);
+    } else {
+      pane.dispose();
+      d.close();
+    }
+  });
+  setTimeout(() => pane.focus(), 60);
 }
 
 export function openPray(
