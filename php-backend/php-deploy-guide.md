@@ -359,3 +359,88 @@ PHP_DISABLE_FUNCTIONS="set_time_limit,ini_set,getenv,curl_init,curl_exec" npm ru
 - **充值档位 id 换成了 `p1` / `p5` / `p10`**，旧的 `p6` / `p30` / `p98` 不再可用（模拟充值接口会返回「请选择充值档位」）。旧版前端缓存的页面请强制刷新（Ctrl+F5）。
 - **历史订单与流水**（`topups`、`pay_orders`）原样保留，里面仍是旧 id、旧金额和当时发放的福币。上线时刻还没付款的旧订单（`pending`）仍按**订单自己记录的金额和福币**核对入账：付款成功就按当时的订单给福币，不会按新价格重算。
 - 祈福牌的返还能量改为 0 后，历史上已发放的能量不回收。
+
+## 12. 手机短信验证码登录（可选；不配置就不显示）
+
+登录弹窗多了「短信登录」标签：输入手机号 → 获取 6 位验证码 → 登录。**手机号第一次验证成功就自动注册**（用户名形如 `139_5678_k3x9`：前 3 位 + 后 4 位 + 随机后缀；送 30 点能量），和「用户名 + 密码」并存。短信注册的账号没有可用密码，只能用验证码登录。
+
+### 12.1 短信平台与接口假设
+
+平台：美联软通 5C（http://www.5c.com.cn/ ，后台 http://m.5c.com.cn ）。接口依据官网下载的《美联软通5C平台接口文档20170222版》第 3.1 节「HTTP 发送接口」：
+
+| 项 | 取值 |
+| --- | --- |
+| 地址 | `https://m.5c.com.cn/api/send/index.php`（同时支持 `http://`，POST / GET） |
+| 参数 | `username`、`password_md5`（32 位，文档要求小写，代码里统一转小写）、`apikey`、`mobile`（11 位）、`content`（短信全文）、`encode=UTF-8` |
+| 成功 | 返回 `success:msgid` |
+| 失败 | 返回 `error:xxx`，见下表；用户界面只显示「短信发送失败，请稍后再试」，原始返回只写服务器日志 |
+
+内容形如：`【阳光互联】您的验证码是123456，5分钟内有效。`（签名放在开头；平台文档要求必须带签名）。
+
+| 平台返回 | 含义 / 怎么办 |
+| --- | --- |
+| `success:xxxx` | 提交成功，没收到短信时到后台查发送状态 |
+| `error:APIKEY or password error` | apikey 或 MD5 密码不对 |
+| `error:Unauthorized IP address` | 平台开了 IP 白名单：把景安主机出口 IP（Vercel 没有固定 IP，不要开白名单）加进去，或关闭白名单 |
+| `error:Account balance is insufficient` | 余额不足 |
+| `error:Throughput Rate Exceeded` | 平台限频 |
+| `error:Black keywords is:xxx` | 内容命中屏蔽词 |
+| `error:Missing ...` / `Unrecognized encoding` / `Invalid md5 password length` | 参数缺失 / 编码 / MD5 长度不对 |
+| `error:Account is blocked` | 账号被禁用 |
+
+发送层是独立文件 `api/lib/sms_sender.php`（Node 版是 `server/sms.ts` 里的 `providerSender`），换平台只改这一处。
+
+### 12.2 `config.php` 要追加的项（机密，只放服务器）
+
+```php
+'SMS_USERNAME'     => '平台用户名',
+'SMS_PASSWORD_MD5' => '32位MD5密码',
+'SMS_APIKEY'       => 'apikey',
+'SMS_SIGN'         => '【阳光互联】',
+// 可选：'SMS_API_URL' => 'http://m.5c.com.cn/api/send/index.php',  // 主机 CA 证书过旧、HTTPS 连不上时才改（会明文传输凭据）
+// 可选：'SMS_PHONE_DAILY_LIMIT' => 10, 'SMS_IP_DAILY_LIMIT' => 30, 'SMS_TOTAL_DAILY_LIMIT' => 3000,
+// 开发/测试：'SMS_MOCK' => true（不联网、不真实发短信，短信写入 SMS_MOCK_OUTBOX 文件）。线上保持 false（默认）。
+```
+
+凭据都没填且没开 mock 时，`GET /sms/info` 返回 `enabled:false`，前端自动隐藏「短信登录」标签。Vercel（Node）版用同名环境变量：`SMS_USERNAME`、`SMS_PASSWORD_MD5`、`SMS_APIKEY`、`SMS_SIGN`、`SMS_API_URL`、`SMS_MOCK`、`SMS_MOCK_OUTBOX`、`SMS_PHONE_DAILY_LIMIT`、`SMS_IP_DAILY_LIMIT`、`SMS_TOTAL_DAILY_LIMIT`、`SMS_CODE_SECRET`。
+
+### 12.3 安全与防滥用
+
+- 验证码 6 位，加密安全随机；服务端只存 HMAC 哈希 + 过期时间（5 分钟）+ 尝试次数（最多 5 次），验证成功立即作废；重发会使旧验证码失效。
+- 同手机号 60 秒只能发一次；滚动 24 小时：同手机号 10 条、同 IP 30 条、全站 3000 条（可在 config 调整）。验证接口另有同 IP 失败限流（10 分钟 8 次，复用现有限流表）。
+- 手机号只接受大陆号码 `1[3-9]\d{9}`。「验证码错误 / 过期 / 次数用尽 / 从没发过」统一提示「验证码错误或已过期」，不会泄露某手机号是否注册。
+- mock 模式不会把验证码放进 HTTP 响应：即使误开也只是发不出短信，不会变成「任意手机号可登录」。
+- 平台文档提示「注册验证码建议加入图形识别码以防短信轰炸」。目前靠上面的限额兜底；如果后面看到被刷，再加图形验证码。
+
+### 12.4 对线上数据库的影响
+
+只**新增**两张表，不改动 `users` 等任何现有表：`sms_codes`（验证码哈希、尝试次数、过期时间、发送 IP）、`user_phones`（账号与手机号一对一绑定，`phone` 唯一）。两张表用 `CREATE TABLE IF NOT EXISTS`（MySQL 5.6 / InnoDB / utf8mb4），PHP 在**首次访问 `/sms/*` 时自动创建**，所以老站点不需要重新运行 install.php；`schema.sql` / `install.php` 也已同步。回滚：删掉新文件即可，两张表留着不影响旧功能（想清理可 `DROP TABLE sms_codes, user_phones`）。
+
+### 12.5 需要上传的文件
+
+- `api/lib/sms_sender.php`（新）、`api/lib/sms.php`（新）
+- `api/index.php`、`api/install.php`、`api/lib/app.php`、`api/lib/schema.sql`、`api/config.sample.php`（只作参考，不要覆盖线上 `config.php`）
+- 前端：整包 `qifu-frontend-query-style`（景安不支持重写，用查询式前端），覆盖 `index.html` 与 `assets/`
+- 然后在线上 `config.php` 追加 12.2 的配置
+
+### 12.6 真实发送测试
+
+```bash
+export SMS_USERNAME='...'; export SMS_PASSWORD_MD5='...'; export SMS_APIKEY='...'
+./scripts/sms-send-test.sh 138xxxxxxxx          # 会先确认，再向该手机真实发一条，并打印平台原始返回码与含义
+./scripts/sms-send-test.sh 138xxxxxxxx --dry-run # 只打印内容（凭据打码），不联网
+```
+
+### 12.7 绑定手机号
+
+已有账号绑定/换绑：接口 `POST /sms/send`（`purpose:"bind"`）、`POST /sms/bind`、`GET /sms/phone`。前端已有绑定弹窗，设置菜单里一行代码即可打开：`window.dispatchEvent(new Event('qifu:bind-phone'))`。
+
+### 12.8 自动化测试（开发者）
+
+```bash
+npm test                 # Node 单元/集成（含 server/sms.test.ts），发送层全部是假的
+export QIFU_DB_NAME=... QIFU_DB_USER=... QIFU_DB_PASS=...   # 可被清空的测试库
+npm run test:sms         # 同一套场景分别跑在 Node 与 PHP 上并逐字对比；PHP 发送层对本机假平台；旧库自动补表
+```
+
+测试全程只访问 127.0.0.1，不会调用真实短信平台，代码里也没有写死的测试手机号。
