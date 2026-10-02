@@ -12,6 +12,7 @@ header('X-Robots-Tag: noindex');
 
 require __DIR__ . '/lib/db.php';
 require __DIR__ . '/lib/game.php';
+require __DIR__ . '/lib/alipay.php';
 require __DIR__ . '/lib/app.php';
 
 function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
@@ -95,7 +96,7 @@ try {
     q_ensure_test_account();
     $log[] = q_test_account() ? '测试账号已就绪（用户名见 config.php）' : '测试账号已关闭（TEST_ACCOUNT_DISABLED）';
 
-    foreach (['users', 'user_terrains', 'prayers', 'sessions', 'topups'] as $t) {
+    foreach (['users', 'user_terrains', 'prayers', 'sessions', 'topups', 'pay_orders'] as $t) {
         $log[] = "表 {$t}：" . (int) q_val("SELECT COUNT(*) FROM `$t`") . ' 行';
     }
 } catch (Throwable $e) {

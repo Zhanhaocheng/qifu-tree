@@ -42,6 +42,7 @@ if (q_fn('register_shutdown_function')) {
 try {
     require __DIR__ . '/lib/db.php';
     require __DIR__ . '/lib/game.php';
+    require __DIR__ . '/lib/alipay.php';
     require __DIR__ . '/lib/app.php';
     q_dispatch();
     q_ob_end_all(true);

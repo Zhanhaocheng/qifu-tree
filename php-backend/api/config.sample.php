@@ -37,6 +37,47 @@ return [
     // /api/me 与 /api/config 返回的 mode（local 表示正式存储；demo 会让前端显示演示提示条）
     'MODE' => 'local',
 
+    // ---- 支付宝充值 ----
+    // 全部留空 = 沿用「模拟充值」（点击即到账，不收钱）。只要填了 APP_ID / 密钥中的任何一项，
+    // 就切换为真实支付并关闭模拟充值（配置填一半时支付不可用，而不是退回模拟，避免白送福币）。
+    // 私钥是机密：只写在服务器上的 config.php 里，不要提交到 Git、不要发给别人。
+    'ALIPAY_APP_ID' => '',            // 开放平台应用 APPID（沙箱用沙箱应用的 APPID）
+    // 应用私钥（RSA2）。可以填 PEM（含 -----BEGIN ...----- 头尾），也可以只填去掉头尾的那一长串 base64；PKCS1 / PKCS8 都行。
+    'ALIPAY_PRIVATE_KEY' => '',
+    // 或者把私钥放在网站目录「之外」的文件里，这里填绝对路径（景安不支持 .htaccess，放在 WEB 目录内的文件可能被直接下载！）
+    'ALIPAY_PRIVATE_KEY_PATH' => '',
+    // 支付宝公钥（在开放平台「查看支付宝公钥」，注意不是应用公钥）。格式同上。
+    'ALIPAY_PUBLIC_KEY' => '',
+    'ALIPAY_PUBLIC_KEY_PATH' => '',
+
+    // 证书模式（可选）：设为 true 后改用下面三个证书文件，不再使用 ALIPAY_PUBLIC_KEY。
+    // 三个都是公开证书（不含私钥），可以放在 api/cert/ 下；应用私钥仍然用 ALIPAY_PRIVATE_KEY。
+    'ALIPAY_CERT_MODE' => false,
+    'ALIPAY_APP_CERT_PATH' => '',     // 应用公钥证书，如 __DIR__ . '/cert/appCertPublicKey_2021xxxx.crt'
+    'ALIPAY_PUBLIC_CERT_PATH' => '',  // 支付宝公钥证书，如 .../alipayCertPublicKey_RSA2.crt
+    'ALIPAY_ROOT_CERT_PATH' => '',    // 支付宝根证书，如 .../alipayRootCert.crt
+
+    // 沙箱开关：true 时使用沙箱网关（https://openapi-sandbox.dl.alipaydev.com/gateway.do），APPID/密钥也要换成沙箱应用的。
+    'ALIPAY_SANDBOX' => false,
+    // 网关地址，留空 = 按沙箱开关自动选择（正式 https://openapi.alipay.com/gateway.do）
+    'ALIPAY_GATEWAY' => '',
+
+    // 异步通知 / 同步返回地址。这两个地址要原样填进支付宝开放平台后台（应用 -> 开发设置）。
+    // 主机不支持 URL 重写，所以必须是查询式路由，路径固定为 /pay/alipay/notify 与 /pay/alipay/return。
+    // 升级 HTTPS 后把 http 改成 https 即可（两处都要改，后台也要同步）。
+    'ALIPAY_NOTIFY_URL' => 'http://qifu.laixi.cn/api/index.php?path=/pay/alipay/notify',
+    'ALIPAY_RETURN_URL' => 'http://qifu.laixi.cn/api/index.php?path=/pay/alipay/return',
+
+    // 电脑端支付方式：'qr' = 当面付 precreate，页面里直接显示二维码（默认，需要开通「当面付」）；
+    //                'page' = 电脑网站支付 page.pay，跳转到支付宝收银台（需要开通「电脑网站支付」）。手机端固定用手机网站支付 wap.pay。
+    'ALIPAY_PC_MODE' => 'qr',
+    // 订单超时（如 30m、2h、1d）
+    'ALIPAY_ORDER_TIMEOUT' => '30m',
+    // 可选：收款账号 PID（2088 开头），填了会在通知里额外校验 seller_id
+    'ALIPAY_SELLER_ID' => '',
+    // 访问支付宝网关时校验 HTTPS 证书。只有主机 CA 证书过旧导致无法联网时才临时改 false（响应仍会用支付宝公钥验签）
+    'ALIPAY_SSL_VERIFY' => true,
+
     // true 时 500 错误会在 JSON 的 detail 字段里带上原因，排障用，排完请改回 false
     'DEBUG' => false,
 ];

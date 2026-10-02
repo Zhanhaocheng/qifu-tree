@@ -12,3 +12,8 @@ php-backend/api/import.sql
 import.sql
 *.import.sql
 dist-php
+
+# Alipay: never commit private keys or merchant certificates
+*.pem
+*.key
+php-backend/api/cert/

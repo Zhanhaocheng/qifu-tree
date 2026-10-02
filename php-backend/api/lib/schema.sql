@@ -78,3 +78,26 @@ CREATE TABLE IF NOT EXISTS meta (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT IGNORE INTO meta (k, v) VALUES ('prayer_lock', '');
+
+-- 支付宝充值订单（待支付 pending / 已支付 paid / 已关闭 closed）。
+-- 代码里也会在首次下单/通知时自动执行同一条 CREATE TABLE IF NOT EXISTS，所以老站点不重新安装也能用。
+CREATE TABLE IF NOT EXISTS pay_orders (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  out_trade_no VARCHAR(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id BIGINT NOT NULL,
+  pack_id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  coins INT NOT NULL,
+  amount_cents INT NOT NULL,
+  channel VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'pending',
+  trade_no VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  qr_code VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  created_at BIGINT NOT NULL,
+  paid_at BIGINT NULL,
+  last_query_at BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_pay_orders_no (out_trade_no),
+  UNIQUE KEY uq_pay_orders_trade (trade_no),
+  KEY idx_pay_orders_user (user_id, status),
+  CONSTRAINT fk_pay_orders_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
