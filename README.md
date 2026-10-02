@@ -108,6 +108,18 @@ window.addEventListener('qifu:fx', (e) => {
 公共字段：`intensity`（1-3）、`particles`（`coins | petals | lantern | sparkle`，按主次排序）、`palette`（颜色数组）、`count`（建议粒子数）、`origin`（`tree | tag | terrain | screen`）、`ts`。专有字段：`payment` 带 `added/balance/pack`；`terrain-unlock` 带 `terrain/name/spent/balance`；`terrain-switch` 带 `terrain/name`；`pray` 带 `item/itemName/color/glow/reward/tagId`；`checkin` 带 `gained/streak`。
 
 
+## 界面、字体与动效
+
+2D 界面（HUD、弹窗、商店、登录、toast）的样式与动效与 3D 场景完全分离，不改变大树和背景的观感。
+
+- **字体（自托管，商用免费）**：正文用「霞鹜文楷」（LXGW WenKai Medium），题字（标题、弹窗标题、成功提示）用「马善政楷书」，两者均为 SIL OFL 1.1，许可证见 `src/fonts/OFL-*.txt`。字体按界面实际用字子集化为 woff2，随静态资源一起构建，**不依赖 Google Fonts**：`kai-core`（界面静态文案，约 90 KB，首屏）、`kai-more`（约 650 个高频字，约 135 KB，仅当心愿牌/用户名里出现这些字时才下载，`unicode-range` 控制）、`brush`（约 24 KB）。范围之外的字符回退到系统宋体/楷体。
+- **重新生成字体**（界面文案有改动时）：`pip install fonttools brotli jieba`，下载 LXGW WenKai Medium / Ma Shan Zheng 的 TTF 后运行 `python3 scripts/fonts/build-fonts.py <TTF 目录>`，会更新 `src/fonts/*.woff2` 与 `src/styles/fonts.css`。
+- **令牌与字阶**：`src/style.css` 顶部集中定义颜色、圆角/阴影层级、缓动与时长、字阶（11–34 px）、字距、安全区变量；福币/能量等数字统一用 `tabular-nums`。
+- **动效层**：`src/styles/motion.css`（纯 CSS）+ `src/motion.ts`（事件委托，无新增依赖）。包含：按钮悬停/按下/聚焦/禁用/加载态、涟漪与指针光晕、弹层入场/退出与错落 stagger、选项卡与道具选择的滑动指示器、数字滚动（count-up）、奖励飞入 HUD（订阅 `qifu:fx`，不影响 3D 特效）、toast 弹性入场与倒计时线、骨架屏、手机底部弹层下滑关闭。
+- **性能**：动画只使用 `transform` / `opacity`；毛玻璃（`backdrop-filter`）只在 3D 画质为「高」时启用（`html[data-gfx]` 由场景画质回调同步），「低」档位会关闭流光、图标循环等装饰动画。
+- **减少动态效果**：`prefers-reduced-motion: reduce` 下所有过渡/动画瞬时完成，涟漪与飞入奖励被跳过。
+- **主机 MIME**：部分旧版 IIS 主机没有 `.woff2` 的 MIME 类型，字体会 404（页面会自动回退到系统字体，功能不受影响）。上传后访问 `/assets/kai-core-*.woff2` 应返回 200；若 404，请在主机后台添加 MIME `.woff2 → font/woff2`。
+
 ## 分离部署（静态前端 + 跨域 API）
 
 - 构建前端时设置 `VITE_API_BASE=https://qifu-tree.vercel.app npm run build`，把 `dist/` 上传到任意静态主机（资源使用相对路径，无需服务端重写）。不设置时默认同源 `/api`。
